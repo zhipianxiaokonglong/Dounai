@@ -1,0 +1,434 @@
+/* Dounai 悬浮窗样式。
+ *
+ * 性能约束（docs/architecture.md §7.1）：
+ *  - 动画只作用于 transform / opacity，不触发 layout / paint；
+ *  - 形象层独立合成层；
+ *  - 尊重 prefers-reduced-motion。
+ */
+
+:root {
+  --accent: #5b8def;
+  --accent-2: #7aa2f7;
+  --surface: rgba(255, 255, 255, 0.92);
+  --surface-solid: #ffffff;
+  --text: #1f2430;
+  --text-dim: #6b7280;
+  --danger: #e5484d;
+  --warn: #d97706;
+  --ok: #12a150;
+  --radius: 16px;
+  --shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  /* 悬浮窗不应出现滚动条或选中 */
+  user-select: none;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--text);
+}
+
+.pet {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px;
+  /* 整窗不做动画，避免每帧重绘 */
+}
+
+/* ---------------- 形象层 ---------------- */
+
+.pet__avatar {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.avatar {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  /* 独立合成层：动画只走 GPU */
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  transition:
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease;
+}
+
+.avatar svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 6px 14px rgba(91, 141, 239, 0.35));
+}
+
+.avatar__glow {
+  position: absolute;
+  inset: -12%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(91, 141, 239, 0.35), transparent 68%);
+  opacity: 0;
+  transition: opacity 260ms ease;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* 默认态：极低幅度呼吸，避免长期驻留时视觉疲劳 */
+.avatar[data-state="default"] {
+  animation: breathe 5.2s ease-in-out infinite;
+}
+
+.avatar[data-state="wakeup"] {
+  transform: scale(1.12);
+}
+
+.avatar[data-state="wakeup"] .avatar__glow,
+.avatar[data-state="talking"] .avatar__glow {
+  opacity: 1;
+}
+
+.avatar[data-state="talking"] {
+  /* 说话强度由 --speaking-level 驱动，仅改 transform */
+  transform: scale(calc(1 + var(--speaking-level, 0) * 0.06));
+}
+
+.avatar[data-state="emotion"] {
+  transform: scale(1.06);
+}
+
+.avatar[data-state="degraded"] {
+  opacity: 0.72;
+  filter: grayscale(0.35);
+}
+
+.avatar--pulse {
+  animation: pulse 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: translateZ(0) scale(1);
+  }
+  50% {
+    transform: translateZ(0) scale(1.025);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.16);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ---------------- 状态徽标 ---------------- */
+
+.pet__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  font-size: 11px;
+  color: var(--text-dim);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pet__badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+.pet__badge[data-tone="warn"] .pet__badge-dot {
+  background: var(--warn);
+}
+.pet__badge[data-tone="error"] .pet__badge-dot {
+  background: var(--danger);
+}
+.pet__badge[data-tone="ok"] .pet__badge-dot {
+  background: var(--ok);
+}
+
+/* ---------------- 对话面板 ---------------- */
+
+.panel {
+  width: 100%;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  animation: panel-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.panel__title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.panel__hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.icon-btn:hover {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--text);
+}
+
+.panel__stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.62;
+  /* 文本可选中（用户需要复制回答） */
+  user-select: text;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+
+.panel__empty {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.bubble {
+  margin-bottom: 10px;
+  animation: bubble-in 160ms ease;
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.bubble--user {
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.bubble--assistant .bubble__body {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble--code .bubble__body {
+  font-family: "Cascadia Code", "Consolas", monospace;
+  font-size: 12px;
+  background: rgba(15, 23, 42, 0.05);
+  border-radius: 8px;
+  padding: 8px 10px;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* 流式光标：用伪元素，避免额外 DOM 节点引起重排 */
+.bubble--streaming .bubble__body::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: caret 1s steps(2, start) infinite;
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+.panel__notice {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--warn);
+  background: rgba(217, 119, 6, 0.08);
+  border-top: 1px solid rgba(217, 119, 6, 0.16);
+}
+
+.panel__notice[data-tone="error"] {
+  color: var(--danger);
+  background: rgba(229, 72, 77, 0.08);
+  border-top-color: rgba(229, 72, 77, 0.16);
+}
+
+.panel__composer {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.panel__input {
+  flex: 1;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+  user-select: text;
+}
+
+.panel__input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91, 141, 239, 0.14);
+}
+
+.panel__input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.send-btn {
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  width: 34px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 140ms ease, transform 120ms ease;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-2);
+}
+
+.send-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------- 勿扰 / 深色 ---------------- */
+
+.pet[data-dnd="true"] .pet__avatar {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .avatar,
+  .avatar[data-state="default"],
+  .panel,
+  .bubble {
+    animation: none !important;
+    transition: none !important;
+  }
+  .bubble--streaming .bubble__body::after {
+    animation: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: rgba(28, 31, 38, 0.92);
+    --surface-solid: #1c1f26;
+    --text: #e7e9ee;
+    --text-dim: #9aa3b2;
+  }
+  .panel__input {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: var(--text);
+  }
+  .panel__head,
+  .panel__composer {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+  .bubble--code .bubble__body {
+    background: rgba(255, 255, 255, 0.07);
+  }
+}

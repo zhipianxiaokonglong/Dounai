@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+
+# 构建产物（由 CI / 本地 `npm run build` 生成，不入库）
+dist/
+src-tauri/target/
+src-tauri/gen/
+
+# 本地运行与测试临时目录（含上游数据、日志、基准、截图）
+.cache/
+
+# 测试残留与调试产物
+*-temp.html
+*.log
+*.png.tmp
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.suo
+Thumbs.db
+.DS_Store
+
+# 本地环境变量（绝不应包含密钥入库）
+.env
+.env.local

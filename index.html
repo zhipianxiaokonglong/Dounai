@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dounai</title>
+    <link rel="stylesheet" href="./styles/app.css" />
+  </head>
+  <body>
+    <div id="app" class="pet" data-state="default">
+      <!-- 形象层：可替换，见 src/avatar/ -->
+      <div id="avatar-host" class="pet__avatar"></div>
+
+      <!-- 状态徽标：降级/勿扰/连接状态 -->
+      <div id="badge" class="pet__badge" hidden>
+        <span id="badge-dot" class="pet__badge-dot"></span>
+        <span id="badge-text"></span>
+      </div>
+
+      <!-- 对话面板：默认收起，点击形象或按热键展开 -->
+      <section id="panel" class="panel" hidden>
+        <header class="panel__head">
+          <span class="panel__title">Dounai</span>
+          <span id="model-hint" class="panel__hint"></span>
+          <button id="btn-close" class="icon-btn" title="收起" aria-label="收起">×</button>
+        </header>
+
+        <div id="stream" class="panel__stream" role="log" aria-live="polite">
+          <div id="empty-hint" class="panel__empty">说点什么吧，我在。</div>
+        </div>
+
+        <div id="notice" class="panel__notice" hidden></div>
+
+        <form id="composer" class="panel__composer">
+          <input
+            id="input"
+            class="panel__input"
+            type="text"
+            autocomplete="off"
+            placeholder="输入消息…"
+            aria-label="输入消息"
+          />
+          <button id="btn-send" class="send-btn" type="submit" aria-label="发送">↵</button>
+        </form>
+      </section>
+
+      <!-- 音频元素：由编排器控制，不自动播放 -->
+      <audio id="voice" preload="auto"></audio>
+    </div>
+    <script type="module" src="./src/ui/main.ts"></script>
+  </body>
+</html>
