@@ -6,7 +6,7 @@
  * 而不是只 mock 一个函数。
  */
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   InputAdapter,
   LLMAdapter,
@@ -22,6 +22,27 @@ const LIVE = {
   llm: process.env.DOUNAI_LLM_URL ?? "http://127.0.0.1:8102",
   output: process.env.DOUNAI_OUTPUT_URL ?? "http://127.0.0.1:8103",
 };
+
+/**
+ * 部分用例需要「一个已知健康的上游」作为对照组（例如「只有 output 挂了，
+ * 文本仍要完整」）。上游未启动时这类用例失去意义，必须跳过而不是失败——
+ * 否则本地少起一个服务就会被误报成产品缺陷。
+ */
+let live: { input: boolean; llm: boolean; output: boolean };
+
+beforeAll(async () => {
+  const [a, b, c] = await Promise.all([
+    new InputAdapter(LIVE.input).probe(),
+    new LLMAdapter(LIVE.llm).probe(),
+    new OutputAdapter(LIVE.output).probe(),
+  ]);
+  live = { input: a, llm: b, output: c };
+  if (!a || !b || !c) {
+    console.warn(
+      `[degradation] 上游未全部就绪 input=${a} llm=${b} output=${c}，依赖真实上游的用例将跳过`,
+    );
+  }
+}, 30_000);
 
 describe("单模块不可用", () => {
   it("input 不可用：进入 degraded，给出可读提示", async () => {
@@ -43,6 +64,10 @@ describe("单模块不可用", () => {
   }, 30_000);
 
   it("llm 不可用：探活失败但不抛异常", async () => {
+    // 需要真实 input 作为对照组：input 必须先能正常产出事件，
+    // 否则会被 input 的失败抢先拦截，测不到 llm 的降级表现。
+    if (!live.input) return;
+
     const orchestrator = new Orchestrator(
       {
         input: new InputAdapter(LIVE.input),
@@ -61,6 +86,10 @@ describe("单模块不可用", () => {
   }, 30_000);
 
   it("output 不可用：文本照常，只是没有语音", async () => {
+    // 需要真实 input + llm：文本来自 llm 的 final，与 output 无关，
+    // 这正是本用例要证明的独立性。
+    if (!live.input || !live.llm) return;
+
     const orchestrator = new Orchestrator(
       {
         input: new InputAdapter(LIVE.input),

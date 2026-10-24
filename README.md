@@ -3,6 +3,7 @@
 > 一款开源的 AI 情感助手——为孤独而有技术能力的你，提供有温度、且真正属于你自己的智能陪伴。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen)](docs/TEST_REPORT.md)
 ![Status](https://img.shields.io/badge/status-开发中-orange)
 
 **本仓库是 Dounai 的「组装层 + 桌面悬浮窗」**：它把输入层、模型层、语音层三个独立模块
@@ -10,47 +11,43 @@
 
 ---
 
-## ✨ 项目简介
-
-Dounai 是一款开源的 AI 情感助手。与传统聊天助手不同，我们在提供情绪价值的同时，
-坚持把控制权和技术自由交还给用户：
-
-- 🫂 **情绪价值**：带情感表达的语音交互、长期记忆、懂你所想的陪伴体验；
-- 🛠 **技术能力**：多模态输入、多厂商模型接入、联网搜索、可编程提示词；
-- 🔓 **开源开放**：核心模块全部开源，可独立部署、自由组合、自行魔改。
-
-我们相信：**陪伴不该被垄断，模型不该被锁定，数据不该被上传。**
-
----
-
 ## 📦 模块地图
 
-Dounai 是模块化产品，每个模块都可以独立运行、独立测试：
+Dounai 是模块化产品，每个模块都能独立运行、独立测试：
 
 | 模块 | 职责 | 仓库 |
 |---|---|---|
-| 输入层 | 文字/图像/语音接入、声纹唤醒、多厂商适配 | [`Dounai_input`](https://github.com/zhipianxiaokonglong/Dounai_input) |
+| 输入层 | 文字 / 图像 / 语音接入、声纹唤醒、多厂商适配 | [`Dounai_input`](https://github.com/zhipianxiaokonglong/Dounai_input) |
 | 模型层 | 模型路由、提示词、上下文、联网检索、情感打标 | [`OmniNexus`](https://github.com/zhipianxiaokonglong/OmniNexus) |
 | 语音层 | 标签驱动的情感 TTS、文本渲染切块、优雅降级 | MoodVoice |
 | **组装层（本仓库）** | **事件编排、悬浮窗 UI、系统集成、用户文档** | **Dounai** |
 
-本仓库**只通过约定的事件契约**与上游对接，不依赖其内部实现。契约见
-[`docs/contracts.md`](docs/contracts.md)。
+本仓库**只通过约定的事件契约**与上游对接，不依赖其内部实现（契约见
+[`docs/contracts.md`](docs/contracts.md)）。
 
 ```text
 你的输入 ──► 输入层 :8101 ──► 模型层 :8102 (SSE) ──► 语音层 :8103
-                                   │                    │
-                                   └──── 组装层（本仓库）◄┘
-                                         悬浮窗 / 托盘 / 语音
+                                    │                    │
+                                    └──── 组装层（本仓库）◄┘
+                                          悬浮窗 / 托盘 / 语音
 ```
 
 ---
 
-## 🎯 目标用户
+## 🎯 本层职责边界
 
-- 想要一个长期陪伴、有记忆、有温度的 AI 助手的你；
-- 对技术有追求、不满足于"黑盒聊天框"的开发者与爱好者；
-- 希望自主选择模型、掌控数据、深度定制的隐私敏感型用户。
+**做**：
+
+1. **接入**：把输入交给输入层，把输入事件交给模型层，把模型输出交给语音层；
+2. **编排**：把三条上游的异步事件按 `session_id` / `event_id` 归并成一个「回合」；
+3. **呈现**：驱动悬浮窗外观、流式文本、语音播放与口型；
+4. **兜底**：任一上游不可用时优雅降级，绝不让 UI 崩溃或卡死。
+
+**不做**（都不属于本层，避免把逻辑重复实现一遍）：
+
+- ❌ 语音识别、声纹唤醒 → 输入层
+- ❌ 模型路由、提示词、上下文、情感分类 → 模型层
+- ❌ TTS 合成、情感风格映射、文本切块 → 语音层
 
 ---
 
@@ -59,36 +56,38 @@ Dounai 是模块化产品，每个模块都可以独立运行、独立测试：
 ### 悬浮窗桌面宠物
 
 - 无边框、透明、置顶、不占任务栏的常驻小窗；
-- 默认形象为产品 logo，**形象渲染层可替换**，为后续正式形象预留；
-- 四种状态：静默 / 唤醒 / 对话 / 情感（情感层预留状态位）。
+- 默认形象为产品 logo；**形象渲染层可替换**，为后续正式形象预留；
+- 四种状态：静默 / 唤醒 / 对话 / 情感（情感层预留状态位，本期只透传标签）。
 
 ### 事件编排
 
-把三个上游的异步事件按 `session_id` / `event_id` 归并成一个「回合」：
-
-- `delta` 用于即时上屏；`final` 是权威值，用于校正文本与标签；
+- `delta` 用于**即时上屏**；`final` 是**权威值**，用于校正文本与标签；
 - **用 `final` 的完整文本调用语音层**，而不是逐 delta 合成——
-  这是避免音画不同步的关键（原因见 [`docs/architecture.md`](docs/architecture.md) §4）。
+  逐段合成会产生多次 TTS 调用、句间断裂与音色跳变，是音画不同步的主要根因
+  （详见 [`docs/architecture.md`](docs/architecture.md) §4）。
 
 ### 系统集成
 
 | 能力 | 实现 |
 |---|---|
-| 托盘图标 | 显示/隐藏、勿扰、置顶、退出 |
+| 托盘图标 | 显示 / 隐藏、勿扰、置顶、退出 |
 | 窗口置顶 | 可开关 |
-| 贴边吸附 | 24px 阈值 |
-| 勿扰模式 | 静音 + 变灰 + 不主动弹窗 |
-| 快捷唤起 | `Ctrl+Alt+D` / `Ctrl+Alt+Q` |
+| 贴边吸附 | 距屏幕边缘 24px 内自动对齐 |
+| 勿扰模式 | 静音 + 形象变灰 + 不主动弹窗 |
+| 快捷唤起 | `Ctrl+Alt+D` 唤起/收起、`Ctrl+Alt+Q` 勿扰 |
+| 关闭即隐藏 | 点 × 只收起，进程由托盘常驻 |
 
 ### 优雅降级
 
-任何一个上游不可用都**不影响其他两个**：
+任一上游不可用都**不影响其他两个**：
 
-| 不可用模块 | 体验 |
+| 不可用模块 | 用户体验 |
 |---|---|
-| 输入层 | 输入框禁用，徽标指明缺哪个 |
+| 输入层 | 输入框禁用，徽标指明缺哪一个 |
 | 模型层 | 可输入但不发送，提示明确 |
-| 语音层 | **文本照常显示**，仅标注语音不可用 |
+| 语音层 | **文本照常显示**，仅标注「语音不可用」 |
+
+降级是**逐模块独立**的：语音层挂掉不影响对话文本，输入层挂掉不影响已有内容回看。
 
 ---
 
@@ -98,34 +97,115 @@ Dounai 是模块化产品，每个模块都可以独立运行、独立测试：
 
 - Node ≥ 20
 - Rust ≥ 1.77 + MSVC 工具链（仅打包桌面应用时需要）
-- Windows 10/11（自带 WebView2）；macOS/Linux 见 [`docs/selection-report.md`](docs/selection-report.md)
+- Windows 10/11（自带 WebView2）
 
-### 启动上游
+### 1. 启动三个上游
 
-三个上游需先运行。端口**必须错开**（输入层与模型层出厂默认都是 8000）：
+端口**必须错开**——输入层与模型层出厂默认都是 `8000`：
 
 ```powershell
 # 输入层
-$env:DOUNAI_PORT = "8101"; dounai-input serve
+$env:DOUNAI_DATA_DIR = "$PWD\.data"
+$env:DOUNAI_PORT = "8101"
+dounai-input serve
 
-# 模型层
-$env:OMNI_PORT = "8102"; python -m omninexus
+# 模型层（离线调试可启用自带的 echo 模型）
+$env:OMNI_PORT = "8102"
+python -m omninexus
 
 # 语音层
-$env:EMOTION_TTS_PORT = "8103"; python -m emotional_tts serve
+$env:EMOTION_TTS_PORT = "8103"
+python -m emotional_tts serve
 ```
 
-### 启动悬浮窗
+自检：
+
+```powershell
+curl http://127.0.0.1:8101/healthz
+curl http://127.0.0.1:8102/v1/healthz
+curl http://127.0.0.1:8103/api/health
+```
+
+### 2. 启动悬浮窗
 
 ```powershell
 npm install
-
-npm run dev        # 开发模式（Vite 代理，免 CORS 配置）
-# 或
-npm run build && npx tauri build   # 打包桌面应用
+npm run dev          # 开发模式：Vite 代理自动转发到三个上游
 ```
 
+打包为单文件可执行程序（已验证）：
+
+```powershell
+npm run build
+cargo build --release --manifest-path src-tauri/Cargo.toml
+# 产物：src-tauri/target/release/dounai.exe  ≈ 7.9 MB
+```
+
+> `npx tauri build` 可额外产出 NSIS 安装包，但它需要联网下载打包工具，
+> 离线环境会失败——因此上表给的是**已验证可用**的构建路径。
+
 详细步骤、故障排查与隐私说明见 **[用户文档](docs/user-guide.md)**。
+
+---
+
+## 🗂 项目结构
+
+```text
+src/
+├── contracts/      # 三个上游的事件契约解析（宽松、前向兼容）
+├── upstream/
+│   ├── transport.ts   # 传输层：主进程代理 / Vite 代理 两种模式
+│   └── adapters.ts    # 三个上游的 HTTP 适配器 + SSE 收集器
+├── orchestrator/   # 回合状态机、事件归并、降级决策
+├── avatar/         # 可替换形象层（接口 + 注册表 + 默认 logo 实现）
+└── ui/             # 悬浮窗渲染、设置、主进程桥接
+src-tauri/
+├── src/main.rs     # 窗口、托盘、快捷键、贴边吸附
+└── src/proxy.rs    # 上游代理（仅允许回环地址）
+tests/              # 契约 / 编排 / SSE 单测 + 真实上游集成测试
+docs/               # 架构、契约、选型、调研、用户文档、测试报告
+```
+
+---
+
+## 🔁 事件流与契约示例
+
+模型层的 SSE 帧（真实格式，见 [`docs/contracts.md`](docs/contracts.md) §2）：
+
+```text
+event: meta
+data: {"event_id":"…","session_id":"…","planned_model":"echo:echo"}
+
+event: route
+data: {"provider":"echo","model":"echo:echo","fallback":false}
+
+event: delta
+data: {"event_id":"…","session_id":"…","content":"增量","stream":true,
+       "tags":{"emotion":"neutral","type":"text","intent":"reply"}}
+
+event: final
+data: {"event_id":"…","session_id":"…","content":"完整文本","stream":false,
+       "tags":{"emotion":"comfort","type":"text","intent":"reply"}}
+```
+
+语音层的输出事件：
+
+```json
+{
+  "event_id": "…",
+  "text": "原文，逐字保持",
+  "audio_ref": "/api/v1/audio/<hash>.mp3",
+  "style": {"emotion": "comfort", "label": "安慰", "speed": 0.92, "tone": "温柔低缓"},
+  "status": "synthesized",
+  "degraded": false,
+  "timings": {"first_chunk_ms": 836.7, "total_ms": 1163.1}
+}
+```
+
+两个易踩的坑，本层已处理：
+
+- `audio_ref` 是**相对路径**，必须拼语音层基址才能播放；
+- 它是**临时引用**（缓存会过期/被清理），不能当历史消息的永久播放地址。
 
 ---
 
@@ -135,9 +215,9 @@ npm run build && npx tauri build   # 打包桌面应用
 
 - 对话数据、记忆库全部**本地存储，不上传网络**；
 - 组装层**不记录对话内容**：日志只有状态、耗时、错误码与事件 UUID；
-- **无任何统计上报**；若未来加入，必须默认关闭且明确告知；
+- **无任何统计上报**；若未来加入，必须默认关闭且首次启动明确告知；
 - API 密钥**仅存于上游本地环境变量**，悬浮窗从不读取、不代管；
-- 悬浮窗只连接 `127.0.0.1` 上的三个本地服务，无对外连接。
+- 悬浮窗只连接 `127.0.0.1`，主进程代理强制校验回环地址，**无对外连接**。
 
 ---
 
@@ -145,12 +225,53 @@ npm run build && npx tauri build   # 打包桌面应用
 
 | 项 | 选择 | 理由 |
 |---|---|---|
-| 桌面框架 | **Tauri 2** | 单文件约 8MB，对比 Electron 的 215MB；常驻内存更小 |
-| 前端 | 原生 TypeScript + Vite | 无框架，减小体积与启动开销 |
-| 形象渲染 | 可替换接口 + 默认 SVG | 为正式形象预留，与编排解耦 |
-| 上游通信 | 主进程代理 | 绕开 CORS 且不削弱上游安全（见 [`docs/cors-and-proxy.md`](docs/cors-and-proxy.md)） |
+| 桌面框架 | **Tauri 2** | 单文件 7.94MB，对比 Electron 215MB（约 27 倍）；常驻内存更小 |
+| 前端 | 原生 TypeScript + Vite | 无框架，产物仅 31.5KB，启动开销低 |
+| 形象渲染 | 可替换接口 + 默认 SVG | 与编排解耦，为正式形象预留 |
+| 上游通信 | 主进程代理 | 绕开 CORS 且**不削弱**上游安全策略（见 [`docs/cors-and-proxy.md`](docs/cors-and-proxy.md)） |
 
-选型过程与实测数据见 **[选型报告](docs/selection-report.md)**。
+选型过程、实测数据与已知代价见 **[选型报告](docs/selection-report.md)**。
+
+---
+
+## 🧪 测试
+
+```powershell
+npm test           # 65 个用例（契约 / 编排 / SSE / 全链路 / 降级）
+npm run typecheck  # 类型检查
+cargo test --release --manifest-path src-tauri/Cargo.toml   # 4 个 Rust 单测
+```
+
+| 套件 | 用例 | 覆盖内容 |
+|---|---|---|
+| `contracts` | 21 | 三个上游契约解析、前向兼容、坏数据 |
+| `orchestrator` | 17 | 状态机、事件归并、幂等、降级、音画同步 |
+| `sse` | 13 | 分帧、keep-alive、坏帧容错、失败序列 |
+| `full-chain` | 8 | **真实三模块**串完整链路（含音频可下载校验） |
+| `degradation` | 6 | 指向死端口的真实降级 |
+| Rust 单测 | 4 | 回环白名单、贴边阈值 |
+
+集成测试用**真实上游**，未启动时会明确打印跳过原因，不会误报失败。
+
+**实测数据**（Edge 155 真实浏览器上下文）：
+
+- 完整回合 input → SSE(37 个 delta) → TTS：约 2.8s，音频 46ms 解码、时长 17.088s
+- 探活三模块并行：318ms
+
+测试范围、降级覆盖与 5 个根因分析见 **[测试报告](docs/TEST_REPORT.md)**。
+
+---
+
+## ⚠️ 已知限制
+
+诚实列出，避免误判为「已全部验证」：
+
+| 限制 | 说明 |
+|---|---|
+| **窗口级交互未做真机验证** | 开发环境（DeepSeek Harness 会话）中 WebView2 运行时无法初始化，`msedgewebview2.exe` 启动即退出码 13。因此置顶、吸附、托盘、热键只完成**编译与单元级验证**。用户桌面（Win10/11 自带 WebView2）不受影响。 |
+| Electron 对照基准无运行数据 | 该会话注入了 `ELECTRON_RUN_AS_NODE=1`，所有 Electron 进程被降级为纯 Node。选型报告中**如实标注为未取得**，未用估算值填充。 |
+| 模型回答质量为模板 | 集成测试用模型层自带的离线 `echo` 模型，输出是固定模板。验证的是**链路与契约正确性**，不是回答质量。 |
+| 跨平台仅验证 Windows | macOS / Linux 的移植策略见选型报告 §3，未实机验证。 |
 
 ---
 
@@ -160,22 +281,10 @@ npm run build && npx tauri build   # 打包桌面应用
 - [x] 悬浮窗四态与系统集成（托盘 / 置顶 / 吸附 / 勿扰 / 热键）
 - [x] 可替换形象渲染层
 - [x] 全链路集成测试与降级验证
+- [ ] **窗口级交互真机验证**（依赖可用的 WebView2 图形环境）
 - [ ] 正式助手形象（基于社区反馈推出）
 - [ ] 情感表现层启用（状态位已预留）
-- [ ] 提示词/人格可视化编辑
-
----
-
-## 🧪 测试
-
-```powershell
-npm test           # 单元 + 集成（69 个用例）
-npm run typecheck  # 类型检查
-cargo test --release --manifest-path src-tauri/Cargo.toml
-```
-
-集成测试用**真实上游**跑完整链路，未启动时自动跳过。
-实测数据、降级覆盖与根因分析见 **[测试报告](docs/TEST_REPORT.md)**。
+- [ ] 提示词 / 人格可视化编辑
 
 ---
 
@@ -187,7 +296,7 @@ cargo test --release --manifest-path src-tauri/Cargo.toml
 | [架构设计](docs/architecture.md) | 分层、状态机、降级矩阵、性能预算 |
 | [事件契约](docs/contracts.md) | 与三个上游的完整接口约定 |
 | [跨域与代理](docs/cors-and-proxy.md) | 为什么必须代理，以及如何实现 |
-| [选型报告](docs/selection-report.md) | Electron vs Tauri 实测 |
+| [选型报告](docs/selection-report.md) | Electron vs Tauri 实测与跨平台建议 |
 | [同类调研](docs/research.md) | VPet / Shimeji / N0va / Desktop Goose / 豆包 / Raycast / uTools |
 | [测试报告](docs/TEST_REPORT.md) | 测试范围、实测数据、根因分析 |
 
