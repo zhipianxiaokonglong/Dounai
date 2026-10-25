@@ -2,6 +2,10 @@
 
 集成测试用**真实上游**验证契约，不 mock。未启动时会自动跳过，不阻塞常规单测。
 
+> **前提**：本仓库是组装层，本身不包含三个上游的源码。
+> 你需要另外把 `Dounai_input`、`OmniNexus`、`MoodVoice` 三个仓库克隆到**任意位置**
+> （下面用 `$INPUT_REPO` / `$LLM_REPO` / `$TTS_REPO` 表示它们的路径）。
+
 ## 1. 端口约定
 
 | 模块 | 变量 | 默认 | 探活 |
@@ -12,12 +16,22 @@
 
 ## 2. 启动三个上游
 
+先把三个仓库的路径填进来（按你的实际位置改）：
+
+```powershell
+$INPUT_REPO = "C:\src\Dounai_input"
+$LLM_REPO   = "C:\src\OmniNexus"
+$TTS_REPO   = "C:\src\output"
+$DATA       = "$env:TEMP\dounai-it"    # 上游数据目录，放临时区即可
+New-Item -ItemType Directory -Force -Path $DATA | Out-Null
+```
+
 ### 2.1 输入层（8101）
 
 ```powershell
-$env:DOUNAI_DATA_DIR = "D:\Program\Dounai\.cache\run\input-data"
+$env:DOUNAI_DATA_DIR = "$DATA\input-data"
 $env:DOUNAI_PORT = "8101"
-cd D:\Program\input
+cd $INPUT_REPO
 .\.venv\Scripts\python.exe -m dounai_input serve
 ```
 
@@ -26,11 +40,17 @@ cd D:\Program\input
 `echo` 默认关闭。复制一份配置并把它打开，避免污染上游仓库：
 
 ```powershell
-# 把 config/default.yaml 里 echo 段的 enabled: false 改成 true
-$env:OMNI_CONFIG = "D:\Program\Dounai\.cache\run\omni-config.yaml"
-$env:OMNI_DATA_DIR = "D:\Program\Dounai\.cache\run\omni-data"
+# 把 $LLM_REPO\config\default.yaml 里 echo 段的 enabled: false 改成 true，
+# 存到 $DATA\omni-config.yaml
+New-Item -ItemType Directory -Force -Path "$DATA\omni" | Out-Null
+(Get-Content "$LLM_REPO\config\default.yaml" -Raw) `
+  -replace '(?m)(\s+echo:\r?\n\s+type: echo[\s\S]{0,200}?enabled: )false', '${1}true' `
+  | Set-Content "$DATA\omni\config.yaml" -Encoding UTF8
+
+$env:OMNI_CONFIG = "$DATA\omni\config.yaml"
+$env:OMNI_DATA_DIR = "$DATA\omni-data"
 $env:OMNI_PORT = "8102"
-cd D:\Program\OmniNexus
+cd $LLM_REPO
 .\.venv\Scripts\python.exe -m omninexus
 ```
 
@@ -44,12 +64,12 @@ curl http://127.0.0.1:8102/v1/models | Select-String 'echo:echo'
 ### 2.3 语音层（8103）
 
 ```powershell
-$env:EMOTION_TTS_DATA_DIR = "D:\Program\Dounai\.cache\run\tts-data"
+$env:EMOTION_TTS_DATA_DIR = "$DATA\tts-data"
 $env:EMOTION_TTS_PORT = "8103"
-$env:EMOTION_TTS_ROOT = "D:\Program\output"
-$env:PYTHONPATH = "D:\Program\output\src"
-cd D:\Program\output
-D:\Program\input\.venv\Scripts\python.exe -m emotional_tts serve
+$env:EMOTION_TTS_ROOT = $TTS_REPO
+$env:PYTHONPATH = "$TTS_REPO\src"
+cd $TTS_REPO
+python -m emotional_tts serve
 ```
 
 > 语音层依赖 `edge-tts`。若提示 `No module named edge_tts`：
@@ -61,7 +81,7 @@ D:\Program\input\.venv\Scripts\python.exe -m emotional_tts serve
 ## 3. 运行测试
 
 ```powershell
-cd D:\Program\Dounai
+cd <本仓库路径>
 npm test
 ```
 
@@ -69,6 +89,15 @@ npm test
 
 ```text
 [integration] 上游未全部就绪 input=true llm=false output=true，相关用例将跳过
+```
+
+也可以用环境变量指向别的主机/端口：
+
+```powershell
+$env:DOUNAI_INPUT_URL  = "http://127.0.0.1:9101"
+$env:DOUNAI_LLM_URL    = "http://127.0.0.1:9102"
+$env:DOUNAI_OUTPUT_URL = "http://127.0.0.1:9103"
+npm test
 ```
 
 ## 4. 为什么用 echo 模型

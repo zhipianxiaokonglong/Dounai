@@ -1,0 +1,17 @@
+# 统一行尾为 LF，避免 Windows 检出时 CRLF 引起 diff 噪声与脚本问题。
+# 这是跨平台仓库的常规做法：仓库内统一 LF，检出时不做转换。
+* text=auto eol=lf
+
+# 以下类型明确按二进制处理，禁止任何行尾转换
+*.png binary
+*.ico binary
+*.webp binary
+*.jpg binary
+
+# Windows 批处理文件需要 CRLF，否则 cmd 解析异常
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 锁文件必须保持逐字节稳定
+package-lock.json text eol=lf
+Cargo.lock text eol=lf
