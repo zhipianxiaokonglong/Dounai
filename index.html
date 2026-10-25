@@ -9,17 +9,23 @@
   <body>
     <div id="app" class="pet" data-state="default">
       <!-- 形象层：可替换，见 src/avatar/ -->
-      <div id="avatar-host" class="pet__avatar"></div>
+      <!--
+        拖动区：Tauri 用 data-tauri-drag-region，不是 Electron 的 -webkit-app-region。
+        deep 表示「子树内任意位置都能拖」，这样点在 logo 的 SVG 上也能拖动整窗；
+        而按钮、输入框、下拉等可交互元素由 Tauri 自动豁免，不会误触发拖动。
+      -->
+      <div id="avatar-host" class="pet__avatar" data-tauri-drag-region="deep"></div>
 
       <!-- 状态徽标：降级/勿扰/连接状态 -->
-      <div id="badge" class="pet__badge" hidden>
+      <div id="badge" class="pet__badge" data-tauri-drag-region="deep" hidden>
         <span id="badge-dot" class="pet__badge-dot"></span>
         <span id="badge-text"></span>
       </div>
 
       <!-- 对话面板：默认收起，点击形象或按热键展开 -->
       <section id="panel" class="panel" hidden>
-        <header class="panel__head">
+        <!-- 头部空白处可拖动；标题与提示文字继承拖动，按钮与下拉自动豁免 -->
+        <header class="panel__head" data-tauri-drag-region="deep">
           <span class="panel__title">Dounai</span>
           <!-- 提示词切换：模型层「预留更换接口供 UI 调用」 -->
           <select id="prompt-select" class="panel__select" title="提示词配置" aria-label="提示词配置">
@@ -29,6 +35,7 @@
           <button id="btn-close" class="icon-btn" title="收起" aria-label="收起">×</button>
         </header>
 
+        <!-- 对话区不可拖：用户需要能选中文字复制 -->
         <div id="stream" class="panel__stream" role="log" aria-live="polite">
           <div id="empty-hint" class="panel__empty">说点什么吧，我在。</div>
         </div>

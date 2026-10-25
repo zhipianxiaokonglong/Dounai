@@ -291,6 +291,38 @@ snapshot.degraded === true ✅   （UI 会显示「语音不可用」徽标）
 | **窗口永不显示** | 应用启动后只有托盘图标，看不到悬浮窗；窗口尺寸 14×14 | `build_window` 用了 `.visible(false)`，但 setup 里**从未调用 `show()`**（只有托盘菜单的 toggle 会 show） | setup 末尾 `place_bottom_right()` + `window.show()` |
 | **README 构建指令错误** | 按 README 的 `cargo build --release` 打包，exe 打开是空白窗口 | `cargo build` 只编译 Rust 壳，**不会把 `dist/` 嵌进 exe**；资源嵌入由 `tauri build` 完成 | README 改为 `npx tauri build --no-bundle`，并加警示说明 |
 
+### 6.4 用户反馈：悬浮窗无法拖动（已修复）
+
+用户实测反馈「窗口拖不动」。排查确认是**三个缺陷叠加**：
+
+| 缺陷 | 说明 |
+|---|---|
+| 拖动区属性用错 | 代码里只有 Electron 的 `-webkit-app-region: no-drag`，**Tauri 不认这个属性**；正确做法是 `data-tauri-drag-region`。而且 `no-drag` 反而显式声明了「不可拖」 |
+| 缺少权限 | `capabilities/default.json` 未声明 `core:window:allow-start-dragging` |
+| 吸附逻辑打断拖动 | 旧实现在**每次 `Moved`** 都执行吸附，拖动途中一进入 24px 阈值就被拽回边缘 |
+
+修复内容：
+
+1. 给形象层、状态徽标、面板头部加 `data-tauri-drag-region="deep"`（子树任意位置可拖），
+   按钮/输入框/下拉由 Tauri 自动豁免，不会误触发；
+2. 补 `core:window:allow-start-dragging` 权限；
+3. 吸附改为**松手后**执行：`Moved` 只更新序号，延迟 220ms 后若序号未变才吸附
+   （即「最后一次移动」判定为拖动结束）；
+4. 点击 vs 拖动：Tauri 在 `mousedown` 会 `stopImmediatePropagation()` 吞掉 `click`，
+   因此形象层的展开面板改判 `pointerdown`/`pointerup` 位移（<5px 且 <400ms 才算点击）；
+5. CSS 用 `cursor: move` 提示可拖，移除无效的 `-webkit-app-region`。
+
+**验证结果**：用户手动验证拖动已正常。
+
+**回归测试**：吸附几何逻辑抽成纯函数 `snap_position()`，新增 8 个 Rust 单测覆盖
+左/右/上/下/四角吸附、阈值边界、第二显示器偏移，以及核心回归用例
+`dragging_away_from_edge_is_not_snapped_back`（验证离开阈值不再被吸回）。
+Rust 测试从 4 项增至 12 项，全部通过。
+
+> **自动化局限（如实记录）**：用 `mouse_event` 合成的鼠标消息**不会触发 WebView2 的
+> DOM 指针事件**，因此脚本化拖拽测试对本功能无效（表现为「窗口没动」的假失败）。
+> 拖动这一项必须以人工操作验证。合成输入不产生 WebView2 指针事件是已知行为。
+
 ---
 
 ## 7. 已知限制

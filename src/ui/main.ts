@@ -330,7 +330,34 @@ function closePanel(): void {
   orchestrator.reset();
 }
 
-el.avatarHost.addEventListener("click", () => {
+/**
+ * 形象层点击 vs 拖动。
+ *
+ * 为什么不用 `click`：Tauri 的拖动区在 mousedown 时就会调用
+ * `stopImmediatePropagation()` 启动系统拖拽，后续 click 事件被吞掉，
+ * 于是「点 logo 展开面板」会失效。
+ *
+ * 这里改用 pointerdown/pointerup 自行判定：
+ *  - 按下与抬起之间位移小于 5px 且耗时短于 400ms → 视为点击；
+ *  - 否则视为拖动，不触发面板切换。
+ */
+let pointerStart: { x: number; y: number; t: number } | null = null;
+
+el.avatarHost.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) return;
+  pointerStart = { x: event.clientX, y: event.clientY, t: Date.now() };
+});
+
+el.avatarHost.addEventListener("pointerup", (event) => {
+  if (event.button !== 0 || !pointerStart) return;
+  const dx = Math.abs(event.clientX - pointerStart.x);
+  const dy = Math.abs(event.clientY - pointerStart.y);
+  const elapsed = Date.now() - pointerStart.t;
+  pointerStart = null;
+
+  // 位移或时长超阈值 → 是拖动，不是点击
+  if (dx > 5 || dy > 5 || elapsed > 400) return;
+
   if (el.panel.hidden) openPanel();
   else closePanel();
 });

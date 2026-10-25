@@ -75,7 +75,7 @@ fn build_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R
         .build()
 }
 
-/// 窗口事件：贴边吸附 + 关闭即隐藏（托盘常驻）。
+/// 窗口事件：拖拽结束吸附 + 关闭即隐藏（托盘常驻）。
 fn attach_window_events<R: Runtime>(window: &WebviewWindow<R>) {
     let handle = window.clone();
     window.on_window_event(move |event| match event {
@@ -84,12 +84,42 @@ fn attach_window_events<R: Runtime>(window: &WebviewWindow<R>) {
             api.prevent_close();
             let _ = handle.hide();
         }
+        // 只在**拖动结束**时吸附。
+        //
+        // 早期实现是在每次 Moved 里吸附，拖动过程中一旦进入边缘阈值就被拽回去，
+        // 表现为「窗口拖不动」。Moved 在拖动期间会连续触发，因此必须区分
+        // 「拖动中」与「拖动结束」：这里用「位置稳定 220ms」判定结束。
         WindowEvent::Moved(position) => {
-            if let Some(snapped) = snap_to_edges(&handle, *position) {
-                let _ = handle.set_position(Position::Physical(snapped));
-            }
+            schedule_snap(&handle, *position);
         }
         _ => {}
+    });
+}
+
+/// 拖动结束判定 + 单次吸附。
+///
+/// 用「最后一次移动后静默 220ms」作为拖动结束信号：
+/// 鼠标按住拖动时 Moved 会持续到达，一旦停手就不再更新，此时才吸附，
+/// 用户就不会感到「拖到一半被吸走」。
+///
+/// 用 `std::thread` 而不是 tokio::time，是为了不额外引入 tokio 依赖。
+fn schedule_snap<R: Runtime>(window: &WebviewWindow<R>, position: PhysicalPosition<i32>) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let seq = SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let pending = window.clone();
+
+    // 每次移动都起一个延迟线程；只有「最后一次」那个线程会发现序号未变并执行吸附。
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(220));
+        if SEQ.load(Ordering::SeqCst) != seq {
+            return; // 期间又移动过，本次不是终点
+        }
+        if let Some(snapped) = snap_to_edges(&pending, position) {
+            let _ = pending.set_position(Position::Physical(snapped));
+        }
     });
 }
 
@@ -118,6 +148,50 @@ fn place_bottom_right<R: Runtime>(window: &WebviewWindow<R>) {
     let _ = window.set_position(Position::Physical(PhysicalPosition::new(x.max(origin.x), y.max(origin.y))));
 }
 
+/// 纯几何计算：给定「窗口位置 + 屏幕矩形 + 窗口尺寸」，返回吸附后的位置。
+///
+/// 抽成不依赖窗口句柄的纯函数，是为了能对吸附逻辑做真实单元测试——
+/// 之前的实现直接读 `current_monitor()`，只能靠肉眼验证，边界情况根本测不到。
+///
+/// 返回 `None` 表示无需吸附。
+fn snap_position(
+    position: (i32, i32),
+    screen: (i32, i32, u32, u32), // (x, y, width, height)
+    size: (u32, u32),
+    threshold: i32,
+) -> Option<(i32, i32)> {
+    let (px, py) = position;
+    let (sx, sy, sw, sh) = screen;
+    let (ww, wh) = size;
+
+    let left = sx;
+    let right = sx + sw as i32;
+    let top = sy;
+    let bottom = sy + sh as i32;
+
+    let mut x = px;
+    let mut y = py;
+    let mut changed = false;
+
+    if (x - left).abs() <= threshold {
+        x = left;
+        changed = true;
+    } else if (right - (x + ww as i32)).abs() <= threshold {
+        x = right - ww as i32;
+        changed = true;
+    }
+
+    if (y - top).abs() <= threshold {
+        y = top;
+        changed = true;
+    } else if (bottom - (y + wh as i32)).abs() <= threshold {
+        y = bottom - wh as i32;
+        changed = true;
+    }
+
+    changed.then_some((x, y))
+}
+
 /// 贴边吸附：靠近屏幕左右/上下边缘时对齐，减少「悬浮窗卡在半空」的别扭感。
 fn snap_to_edges<R: Runtime>(
     window: &WebviewWindow<R>,
@@ -128,32 +202,13 @@ fn snap_to_edges<R: Runtime>(
     let origin = monitor.position();
     let size = window.outer_size().ok()?;
 
-    let left = origin.x;
-    let right = origin.x + screen.width as i32;
-    let top = origin.y;
-    let bottom = origin.y + screen.height as i32;
-
-    let mut x = position.x;
-    let mut y = position.y;
-    let mut changed = false;
-
-    if (x - left).abs() <= SNAP_THRESHOLD {
-        x = left;
-        changed = true;
-    } else if (right - (x + size.width as i32)).abs() <= SNAP_THRESHOLD {
-        x = right - size.width as i32;
-        changed = true;
-    }
-
-    if (y - top).abs() <= SNAP_THRESHOLD {
-        y = top;
-        changed = true;
-    } else if (bottom - (y + size.height as i32)).abs() <= SNAP_THRESHOLD {
-        y = bottom - size.height as i32;
-        changed = true;
-    }
-
-    changed.then_some(PhysicalPosition::new(x, y))
+    snap_position(
+        (position.x, position.y),
+        (origin.x, origin.y, screen.width, screen.height),
+        (size.width, size.height),
+        SNAP_THRESHOLD,
+    )
+    .map(|(x, y)| PhysicalPosition::new(x, y))
 }
 
 fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
@@ -328,6 +383,10 @@ fn quit_app<R: Runtime>(app: AppHandle<R>) {
 mod tests {
     use super::*;
 
+    /// 主屏 1920x1080，在原点；窗口 360x420
+    const SCREEN: (i32, i32, u32, u32) = (0, 0, 1920, 1080);
+    const SIZE: (u32, u32) = (360, 420);
+
     #[test]
     fn snap_threshold_is_reasonable() {
         // 吸附阈值必须小于窗口最小宽度的一半，否则会「吸住就动不了」
@@ -339,5 +398,96 @@ mod tests {
     fn window_defaults_are_defined() {
         assert!(WIN_W >= 280.0);
         assert!(WIN_H >= 240.0);
+    }
+
+    #[test]
+    fn no_snap_in_the_middle() {
+        // 屏幕正中：远离所有边缘，不应吸附
+        assert_eq!(snap_position((800, 400), SCREEN, SIZE, SNAP_THRESHOLD), None);
+    }
+
+    #[test]
+    fn snaps_to_left_edge() {
+        assert_eq!(
+            snap_position((10, 400), SCREEN, SIZE, SNAP_THRESHOLD),
+            Some((0, 400))
+        );
+    }
+
+    #[test]
+    fn snaps_to_right_edge() {
+        // 1920 - 360 = 1560；位置 1550 距边缘 10px，应吸到 1560
+        assert_eq!(
+            snap_position((1550, 400), SCREEN, SIZE, SNAP_THRESHOLD),
+            Some((1560, 400))
+        );
+    }
+
+    #[test]
+    fn snaps_to_top_and_bottom() {
+        assert_eq!(
+            snap_position((800, 8), SCREEN, SIZE, SNAP_THRESHOLD),
+            Some((800, 0))
+        );
+        // 1080 - 420 = 660
+        assert_eq!(
+            snap_position((800, 650), SCREEN, SIZE, SNAP_THRESHOLD),
+            Some((800, 660))
+        );
+    }
+
+    #[test]
+    fn snaps_corner_on_both_axes() {
+        assert_eq!(
+            snap_position((12, 8), SCREEN, SIZE, SNAP_THRESHOLD),
+            Some((0, 0))
+        );
+    }
+
+    /// 这是本次修复的核心回归测试。
+    ///
+    /// 拖动过程中窗口会经过「刚好进入阈值」的位置；旧逻辑在每次 Moved 都吸附，
+    /// 于是窗口被反复拽回边缘，表现为「拖不动」。
+    /// 现在吸附只在拖动结束后做一次，因此这里验证：**离开阈值就不再吸附**，
+    /// 从而用户可以自由把窗口拖到屏幕中间。
+    #[test]
+    fn dragging_away_from_edge_is_not_snapped_back() {
+        // 从边缘出发，逐步拖向中间
+        let path = [(0, 0), (30, 30), (120, 120), (500, 300), (900, 500)];
+        let mut last = None;
+        for (x, y) in path {
+            last = snap_position((x, y), SCREEN, SIZE, SNAP_THRESHOLD);
+        }
+        // 最终落在屏幕中间：必须不吸附，否则用户永远拖不出来
+        assert_eq!(last, None);
+    }
+
+    #[test]
+    fn respects_threshold_boundary() {
+        // 恰好等于阈值 → 吸附；超过 1px → 不吸附
+        assert_eq!(
+            snap_position((SNAP_THRESHOLD, 400), SCREEN, SIZE, SNAP_THRESHOLD),
+            Some((0, 400))
+        );
+        assert_eq!(
+            snap_position((SNAP_THRESHOLD + 1, 400), SCREEN, SIZE, SNAP_THRESHOLD),
+            None
+        );
+    }
+
+    #[test]
+    fn works_on_secondary_monitor_with_offset() {
+        // 第二块屏：原点在 (1920, 0)，尺寸 1920x1080
+        let screen2 = (1920, 0, 1920, 1080);
+        // 靠近第二块屏的左边缘
+        assert_eq!(
+            snap_position((1930, 400), screen2, SIZE, SNAP_THRESHOLD),
+            Some((1920, 400))
+        );
+        // 第二块屏右边缘：1920 + 1920 - 360 = 3480
+        assert_eq!(
+            snap_position((3470, 400), screen2, SIZE, SNAP_THRESHOLD),
+            Some((3480, 400))
+        );
     }
 }

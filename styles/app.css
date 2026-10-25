@@ -58,8 +58,10 @@ body {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  cursor: pointer;
-  -webkit-app-region: no-drag;
+  /* 可拖动：用 move 光标明确告诉用户「这个能拖」。
+     注意 Tauri 的拖动由 data-tauri-drag-region 属性驱动，
+     不要用 Electron 的 -webkit-app-region（在 Tauri 下无效）。 */
+  cursor: move;
 }
 
 .avatar {
@@ -216,6 +218,14 @@ body {
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  /* 头部空白区是拖动区，给 move 光标做提示 */
+  cursor: move;
+}
+
+/* 头部里的可交互控件必须恢复默认光标，否则用户以为点了也会拖窗口 */
+.panel__head button,
+.panel__head select {
+  cursor: pointer;
 }
 
 .panel__title {
