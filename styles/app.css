@@ -323,6 +323,71 @@ body {
   }
 }
 
+/* 用户气泡按模态区分：语音/图像用弱化样式，避免抢走回答的注意力 */
+.bubble--user[data-modality="audio"],
+.bubble--user[data-modality="image"] {
+  opacity: 0.78;
+  font-style: italic;
+}
+
+/* 提示词选择器：紧凑，不占头部空间 */
+.panel__select {
+  max-width: 96px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: transparent;
+  border-radius: 6px;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.panel__select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 工具按钮（图像 / 语音） */
+.tool-btn {
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  width: 30px;
+  font-size: 15px;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: opacity 140ms ease, background 140ms ease, transform 120ms ease;
+}
+
+.tool-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.tool-btn:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* 录音中：红色高亮 + 呼吸，给出明确的「正在收音」反馈 */
+.tool-btn[data-recording="true"] {
+  opacity: 1;
+  background: rgba(229, 72, 77, 0.14);
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  50% {
+    background: rgba(229, 72, 77, 0.3);
+  }
+}
+
 .panel__notice {
   padding: 6px 12px;
   font-size: 11px;

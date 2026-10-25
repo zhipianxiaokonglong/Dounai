@@ -117,6 +117,108 @@ describe("Orchestrator 正常链路", () => {
     expect(snapshot.emotion).toBe("comfort");
     expect(snapshot.state).toBe("talking");
     expect(snapshot.notice).toBeNull();
+    expect(snapshot.modality).toBe("text");
+  });
+
+  it("图像输入走 submitImage 并在快照里标记模态", async () => {
+    const { orchestrator, input } = makeOrchestrator({
+      input: {
+        submitImage: vi.fn().mockResolvedValue({
+          event: makeInputEvent({ modality: "image", content: "http://127.0.0.1:8101/v1/media/a" }),
+          degraded: { degraded: false, provider: "offline", model: null, voiceprintChecked: false, requestId: null },
+        }),
+      },
+    });
+
+    const snapshot = await orchestrator.submit({
+      kind: "image",
+      bytes: new Uint8Array([1, 2, 3]),
+      filename: "x.png",
+      mime: "image/png",
+    });
+
+    expect(input.submitImage).toHaveBeenCalledTimes(1);
+    expect(snapshot.modality).toBe("image");
+    expect(snapshot.text).toBe("我在呢，慢慢说。");
+  });
+
+  it("语音输入走 submitAudio，且转写文本优先作为模型输入", async () => {
+    const { orchestrator, input, llm } = makeOrchestrator({
+      input: {
+        submitAudio: vi.fn().mockResolvedValue({
+          event: makeInputEvent({
+            modality: "audio",
+            content: "http://127.0.0.1:8101/v1/media/v",
+            metadata: {
+              asr_text: "语音里说的内容",
+              voiceprint_event: "none",
+              model_capabilities: ["text"],
+            },
+          }),
+          degraded: { degraded: false, provider: "offline", model: null, voiceprintChecked: true, requestId: null },
+        }),
+      },
+    });
+
+    const snapshot = await orchestrator.submit({
+      kind: "audio",
+      bytes: new Uint8Array([1]),
+      filename: "v.webm",
+      mime: "audio/webm",
+      language: "zh",
+    });
+
+    expect(input.submitAudio).toHaveBeenCalledTimes(1);
+    // 关键：送给模型的是转写文本，而不是媒体 URL
+    expect(llm.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "语音里说的内容" }),
+      expect.anything(),
+    );
+    expect(snapshot.modality).toBe("audio");
+  });
+
+  it("声纹唤醒（voiceprint_event=wakeup）驱动唤醒态", async () => {
+    const { orchestrator, snapshots } = makeOrchestrator({
+      input: {
+        submitAudio: vi.fn().mockResolvedValue({
+          event: makeInputEvent({
+            modality: "audio",
+            content: "http://127.0.0.1:8101/v1/media/v",
+            metadata: { asr_text: "豆奶", voiceprint_event: "wakeup", model_capabilities: [] },
+          }),
+          degraded: { degraded: false, provider: "offline", model: null, voiceprintChecked: true, requestId: null },
+        }),
+        submitText: vi.fn(),
+      },
+    });
+
+    const snapshot = await orchestrator.submit({ kind: "audio", bytes: new Uint8Array([1]) });
+
+    // 本轮最终进入对话态
+    expect(snapshot.state).toBe("talking");
+    // 但快照序列里必须先出现唤醒态——这是「唤醒态响应上游唤醒事件」的证据
+    const states = snapshots.map((item) => item.state);
+    expect(states).toContain("wakeup");
+    expect(states.indexOf("wakeup")).toBeLessThan(states.lastIndexOf("talking"));
+  });
+
+  it("普通输入（voiceprint_event=none）不被误判为唤醒事件", async () => {
+    const { orchestrator, snapshots } = makeOrchestrator();
+    await orchestrator.submit("hi");
+
+    // 发送时本来就会短暂进入唤醒态（视觉确认），
+    // 这里断言的是「没有额外的唤醒事件标记」——通过 voiceprint 分支不会触发第二次 patch
+    const wakeCount = snapshots.filter((item) => item.state === "wakeup").length;
+    expect(wakeCount).toBe(1);
+  });
+
+  it("提示词配置按轮透传给模型层", async () => {
+    const { orchestrator, llm } = makeOrchestrator();
+    await orchestrator.submit("hi", { promptProfile: "warm" });
+    expect(llm.runTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ promptProfile: "warm" }),
+      expect.anything(),
+    );
   });
 
   it("把 input 的 event_id 作为下游幂等键", async () => {

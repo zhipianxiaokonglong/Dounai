@@ -40,7 +40,25 @@
 | `metadata.voiceprint_event` | `wakeup`/`none` | **唤醒态唯一触发源** |
 | `metadata.asr_text` | 字符串 | 语音输入的转写结果，显示为「你（语音）」 |
 
-### 1.1 降级信号
+### 1.1 三路输入的请求形态
+
+三个入口最终产出**同一种**事件，因此下游只需处理一种形状：
+
+| 输入 | 请求 | 组装层调用 |
+|---|---|---|
+| 文字 | `POST /v1/inputs/text`（JSON `{text, session_id?, source}`） | `InputAdapter.submitText` |
+| 图像 | `POST /v1/inputs/image`（multipart：`file` + `session_id`? + `source`?） | `InputAdapter.submitImage` |
+| 语音 | `POST /v1/inputs/audio`（multipart：`file` + `language`? + …） | `InputAdapter.submitAudio` |
+
+约束（均由上游执行，组装层不重复实现）：
+
+- 图像：JPEG / PNG / WebP / GIF，≤ 15MB，按**魔数**校验（伪造扩展名会被拒）；
+- 语音：WAV / MP3 / M4A / FLAC / OGG / WebM，≤ 25MB；
+- `language` 为 BCP-47 形式（`zh`、`en-US`），非法值返回 422。
+
+组装层只做两件事：构造 multipart 报文；把响应按契约解析。
+
+### 1.2 降级信号
 
 `input` 的降级信息**不进事件体**（保证契约稳定），只放在响应头：
 
@@ -104,7 +122,21 @@ meta → route → delta* → warning → final          （已输出部分后�
 **关键约束**：delta 的 tags 是「当前已累积文本」的临时值，可能变化；
 下游必须使用 `final` 的 tags。组装层遵守此约定，避免情感标签抖动导致表情乱跳。
 
-### 2.2 辅助帧
+### 2.2 提示词：供 UI 调用的接口
+
+结构图把提示词操作标注为「预留更换接口供 UI 调用」。组装层用**每轮覆盖**语义实现，
+不维护会话生命周期：
+
+| 请求 | 用途 |
+|---|---|
+| `GET /v1/prompts/profiles` | 列出配置，供界面下拉选择 |
+| 请求体 `metadata.prompt_profile` | **本轮**使用的配置 ID |
+
+选这个方式而不是 `POST /v1/sessions/{id}/prompt` 的理由：后者要求组装层先建会话、
+再维护 `session_id` 的生命周期，会让「换个提示词」这种轻量操作牵动状态管理。
+每轮覆盖的语义更小、也更容易做失败降级——拿不到配置列表时静默用默认配置，对话不受影响。
+
+### 2.3 辅助帧
 
 | 帧 | 用途 |
 |---|---|
@@ -114,7 +146,7 @@ meta → route → delta* → warning → final          （已输出部分后�
 | `warning` | 部分输出后中断，随后仍有 final |
 | `error` | 未产生文本即失败，无 final |
 
-### 2.3 错误体
+### 2.4 错误体
 
 ```json
 {"error": {"code": "ALL_PROVIDERS_FAILED", "message": "…", "retryable": false,

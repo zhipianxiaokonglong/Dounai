@@ -30,6 +30,7 @@ import {
   parseWarning,
 } from "../contracts/index.js";
 import { type HttpRequest, type HttpResponse, TransportError, request, requestStream } from "./transport.js";
+import { buildMultipart, guessExtension } from "./multipart.js";
 
 export class UpstreamUnavailableError extends Error {
   readonly module: string;
@@ -82,6 +83,11 @@ export const TIMEOUTS = {
   outputSynthesis: 90_000,
   probe: 3_000,
 } as const;
+
+/** 本地类型守卫：契约解析在 contracts 里，这里只用于适配器内部的宽松取值。 */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /** 把相对 audio_ref 拼成可播放的绝对地址。 */
 export function resolveAudioUrl(outputBase: string, audioRef: string | null): string | null {
@@ -160,11 +166,77 @@ export class InputAdapter {
       throw toUpstreamError("input", "submitText", error);
     }
 
+    return this.finish(response);
+  }
+
+  /**
+   * 图像输入。
+   *
+   * 输入层用 multipart + 魔数双重校验，因此必须带真实文件名与 MIME；
+   * 单文件上限 15MB，超限由上游返回 413（这里不预检，避免重复实现上游规则）。
+   */
+  async submitImage(
+    image: { bytes: Uint8Array; filename?: string; mime?: string },
+    sessionId?: string,
+  ): Promise<SubmitTextResult> {
+    const mime = image.mime ?? "image/png";
+    const filename = image.filename ?? `paste.${guessExtension("", mime)}`;
+    return this.submitFile("image", { bytes: image.bytes, filename, mime }, sessionId, {});
+  }
+
+  /**
+   * 语音输入。
+   *
+   * `language` 是可选 BCP-47（如 `zh`、`en-US`）；上游会据此选择 ASR 语言。
+   * 转写失败时上游仍返回 201，但 `asr_text` 为空且响应头 `X-Dounai-Degraded: true`
+   * —— 这就是「语音没转写成功」的唯一可信信号，必须由调用方读取。
+   */
+  async submitAudio(
+    audio: { bytes: Uint8Array; filename?: string; mime?: string; language?: string },
+    sessionId?: string,
+  ): Promise<SubmitTextResult> {
+    const mime = audio.mime ?? "audio/webm";
+    const filename = audio.filename ?? `voice.${guessExtension("", mime)}`;
+    return this.submitFile(
+      "audio",
+      { bytes: audio.bytes, filename, mime },
+      sessionId,
+      audio.language ? { language: audio.language } : {},
+    );
+  }
+
+  private async submitFile(
+    kind: "image" | "audio",
+    file: { bytes: Uint8Array; filename: string; mime: string },
+    sessionId: string | undefined,
+    extraFields: Record<string, string | undefined>,
+  ): Promise<SubmitTextResult> {
+    const form = buildMultipart(
+      { field: "file", filename: file.filename, mime: file.mime, bytes: file.bytes },
+      { session_id: sessionId, source: "dounai-desktop", ...extraFields },
+    );
+
+    let response: HttpResponse;
+    try {
+      response = await request({
+        url: `${this.base}/v1/inputs/${kind}`,
+        method: "POST",
+        headers: { "Content-Type": form.contentType },
+        bodyBytes: form.bytes,
+        timeoutMs: TIMEOUTS.inputMedia,
+      });
+    } catch (error) {
+      throw toUpstreamError("input", `submit${kind === "image" ? "Image" : "Audio"}`, error);
+    }
+
+    return this.finish(response);
+  }
+
+  private async finish(response: HttpResponse): Promise<SubmitTextResult> {
     const raw = await readJson(response);
     if (response.status >= 400) {
       throw new UpstreamRejectedError("input", parseUpstreamError(raw));
     }
-
     return {
       event: parseInputEvent(raw),
       degraded: parseInputDegraded(response.headers),
@@ -190,6 +262,23 @@ export interface TurnRequest {
   text: string;
   sessionId?: string;
   model?: string;
+  /**
+   * 本轮使用的提示词配置 ID（结构图「提示词操作：预留更换接口供 UI 调用」）。
+   *
+   * 用 model 层支持的**每轮覆盖**语义（`metadata.prompt_profile`），
+   * 而不是先建会话再切提示词——后者需要组装层维护会话生命周期，
+   * 会让「换提示词」这种轻量操作牵动状态管理。
+   */
+  promptProfile?: string;
+}
+
+/** 提示词配置（模型层 `/v1/prompts/profiles` 的返回项）。 */
+export interface PromptProfile {
+  id: string;
+  name: string;
+  description: string;
+  builtin: boolean;
+  activeVersion: number;
 }
 
 export class LLMAdapter {
@@ -205,6 +294,34 @@ export class LLMAdapter {
       return res.status >= 200 && res.status < 400;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * 列出可用提示词配置。
+   *
+   * 失败时返回空数组而不是抛错：提示词选择是**增强功能**，
+   * 拿不到列表不应该让整个对话不可用（用户仍可用默认配置聊天）。
+   */
+  async listPromptProfiles(): Promise<PromptProfile[]> {
+    try {
+      const res = await request({
+        url: `${this.base}/v1/prompts/profiles`,
+        method: "GET",
+        timeoutMs: TIMEOUTS.probe,
+      });
+      if (res.status >= 400) return [];
+      const raw = await readJson(res);
+      const list = isRecord(raw) && Array.isArray(raw.profiles) ? raw.profiles : [];
+      return list.filter(isRecord).map((item) => ({
+        id: String(item.id ?? ""),
+        name: String(item.name ?? item.id ?? ""),
+        description: String(item.description ?? ""),
+        builtin: Boolean(item.builtin),
+        activeVersion: Number(item.active_version ?? 0),
+      })).filter((item) => item.id.length > 0);
+    } catch {
+      return [];
     }
   }
 
@@ -225,6 +342,8 @@ export class LLMAdapter {
       metadata: {
         ...(turn.model ? { model: turn.model } : {}),
         ...(turn.sessionId ? { session_id: turn.sessionId } : {}),
+        // 每轮覆盖提示词配置；不传则沿用模型层默认
+        ...(turn.promptProfile ? { prompt_profile: turn.promptProfile } : {}),
       },
     });
 

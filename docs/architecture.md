@@ -74,6 +74,27 @@ Idle ──────────────► Waking ──(300ms 动效)�
 `emotion` 是**预留**状态：本期只记录并透传标签，形象层提供 `setEmotion(label)` 空实现，
 后续接入正式形象时无需改动编排逻辑。这是需求中「情感表现层后续启用，请预留状态位」的落地方式。
 
+### 3.0 三路输入的归一
+
+结构图把输入拆成文字 / 图像 / 语音三个入口，并把声纹唤醒画在输入层内部（本地处理、不出设备）。
+组装层的处理原则是**入口分三路、下游只一条**：
+
+```text
+submit({kind:"text"} | {kind:"image"} | {kind:"audio"})
+        │
+        ├─ text  → POST /v1/inputs/text        ┐
+        ├─ image → POST /v1/inputs/image       ├─► 同一种 InputEvent
+        └─ audio → POST /v1/inputs/audio       ┘        │
+                                                       ▼
+                                          metadata.voiceprint_event
+                                                       │
+                              == "wakeup" ? 唤醒态 : 直接进入对话态
+```
+
+- 语音的转写文本（`metadata.asr_text`）**优先**作为模型输入，而不是把媒体 URL 交给模型；
+- 图像事件的 `content` 是受控媒体 URL，原样交给模型层（由它做多模态协商）；
+- `voiceprint_event == "wakeup"` 是唤醒态的**唯一上游来源**；热键只是本地补充入口。
+
 ### 3.1 状态迁移的守护条件
 
 - 任一状态都可被 `Degraded` 覆盖：上游错误优先于表现；

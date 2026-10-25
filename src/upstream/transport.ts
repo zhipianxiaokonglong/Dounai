@@ -11,6 +11,14 @@ export interface HttpRequest {
   url: string;
   method: string;
   body?: string;
+  /**
+   * 二进制请求体（图像/语音上传用）。
+   *
+   * 为什么单独一个字段而不是复用 `body`：主进程代理通过 JSON IPC 通信，
+   * 无法直接传字节数组。这里统一转成 base64 交给 Rust 侧解码还原，
+   * 而直连模式直接交给 fetch —— 两条路径的语义由本层吸收，适配器无感知。
+   */
+  bodyBytes?: Uint8Array;
   headers?: Record<string, string>;
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -50,7 +58,8 @@ async function viaProxy(invoke: TauriInvoke, req: HttpRequest): Promise<HttpResp
     request: {
       url: req.url,
       method: req.method,
-      body: req.body ?? null,
+      body: req.bodyBytes ? null : (req.body ?? null),
+      body_base64: req.bodyBytes ? toBase64(req.bodyBytes) : null,
       headers: Object.entries(req.headers ?? {}),
       timeout_ms: req.timeoutMs ?? 30_000,
       stream: false,
@@ -91,7 +100,8 @@ async function viaFetch(req: HttpRequest): Promise<HttpResponse> {
     const response = await fetch(req.url, {
       method: req.method,
       headers: req.headers,
-      body: req.body,
+      // 复制成独立 ArrayBuffer，避免 SharedArrayBuffer 与视图偏移带来的类型/行为歧义
+      body: req.bodyBytes ? new Blob([Uint8Array.from(req.bodyBytes).buffer]) : req.body,
       signal: controller.signal,
     });
     const body = await response.text();
@@ -108,6 +118,24 @@ async function viaFetch(req: HttpRequest): Promise<HttpResponse> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Uint8Array → base64；分块处理，避免大图（15MB）导致调用栈溢出。 */
+export function toBase64(bytes: Uint8Array): string {
+  const hasBtoa = typeof (globalThis as { btoa?: unknown }).btoa === "function";
+  if (hasBtoa) {
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+    }
+    return (globalThis as { btoa: (s: string) => string }).btoa(binary);
+  }
+  // Node 测试环境兜底
+  const bufferCtor = (globalThis as { Buffer?: { from: (b: Uint8Array) => { toString: (e: string) => string } } })
+    .Buffer;
+  if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
+  throw new TransportError("encode", "当前环境不支持 base64 编码");
 }
 
 /**

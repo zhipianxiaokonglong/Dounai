@@ -58,7 +58,7 @@ describe("单模块不可用", () => {
     const health = await orchestrator.probe();
     expect(health.input).toBe(false);
 
-    const snapshot = await orchestrator.submit("你好");
+    const snapshot = await orchestrator.submit({ kind: "text", text: "你好" });
     expect(snapshot.state).toBe("degraded");
     expect(snapshot.notice).toContain("输入服务未连接");
   }, 30_000);
@@ -80,7 +80,7 @@ describe("单模块不可用", () => {
     const health = await orchestrator.probe();
     expect(health.llm).toBe(false);
 
-    const snapshot = await orchestrator.submit("你好");
+    const snapshot = await orchestrator.submit({ kind: "text", text: "你好" });
     expect(snapshot.state).toBe("degraded");
     expect(snapshot.notice).toContain("模型服务未连接");
   }, 30_000);
@@ -99,7 +99,10 @@ describe("单模块不可用", () => {
       { onSnapshot: () => undefined },
     );
 
-    const snapshot = await orchestrator.submit("今天有点累", { model: "echo:echo" });
+    const snapshot = await orchestrator.submit(
+      { kind: "text", text: "今天有点累" },
+      { model: "echo:echo" },
+    );
     // 文本必须完整保留——这是「output 挂掉不影响对话」的核心断言
     expect(snapshot.text.length).toBeGreaterThan(0);
     expect(snapshot.audioUrl).toBeNull();
@@ -120,7 +123,7 @@ describe("单模块不可用", () => {
     const health = await orchestrator.probe();
     expect(health).toEqual({ input: false, llm: false, output: false });
 
-    const snapshot = await orchestrator.submit("你好");
+    const snapshot = await orchestrator.submit({ kind: "text", text: "你好" });
     expect(snapshot.state).toBe("degraded");
     expect(snapshot.notice).toBeTruthy();
     expect(snapshot.health).toEqual({ input: false, llm: false, output: false });
@@ -159,7 +162,7 @@ describe("快照契约", () => {
       { onSnapshot: (snapshot) => snapshots.push(snapshot) },
     );
 
-    await orchestrator.submit("你好", { model: "echo:echo" });
+    await orchestrator.submit({ kind: "text", text: "你好" }, { model: "echo:echo" });
 
     expect(snapshots.length).toBeGreaterThan(1);
     // 每个快照必须是独立对象，避免 UI 侧读到后续变更

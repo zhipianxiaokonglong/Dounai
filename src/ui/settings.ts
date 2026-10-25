@@ -15,6 +15,8 @@ export interface DounaiSettings {
   avatarRenderer: string;
   /** 默认模型 id；留空表示由上游决定 */
   model: string;
+  /** 提示词配置 id；留空表示用模型层默认（空字符串是合法值） */
+  promptProfile: string;
   theme: {
     accent: string;
     surface: string;
@@ -35,6 +37,7 @@ export const DEFAULT_SETTINGS: DounaiSettings = {
   },
   avatarRenderer: "logo",
   model: "",
+  promptProfile: "",
   theme: {
     accent: "#5b8def",
     surface: "#ffffff",

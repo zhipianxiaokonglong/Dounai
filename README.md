@@ -3,7 +3,7 @@
 > 一款开源的 AI 情感助手——为孤独而有技术能力的你，提供有温度、且真正属于你自己的智能陪伴。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen)](docs/TEST_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-87%20passed-brightgreen)](docs/TEST_REPORT.md)
 ![Status](https://img.shields.io/badge/status-开发中-orange)
 
 **本仓库是 Dounai 的「组装层 + 桌面悬浮窗」**：它把输入层、模型层、语音层三个独立模块
@@ -65,6 +65,24 @@ Dounai 是模块化产品，每个模块都能独立运行、独立测试：
 - **用 `final` 的完整文本调用语音层**，而不是逐 delta 合成——
   逐段合成会产生多次 TTS 调用、句间断裂与音色跳变，是音画不同步的主要根因
   （详见 [`docs/architecture.md`](docs/architecture.md) §4）。
+
+### 三路输入
+
+对应结构图「文字 / 图像 / 语音」三个入口，最终都归一成同一种事件：
+
+| 入口 | 界面操作 | 走向 |
+|---|---|---|
+| 文字 | 输入框回车 | `POST /v1/inputs/text` |
+| 图像 | 点 🖼 选图（PNG/JPEG/WebP/GIF） | `POST /v1/inputs/image`（multipart） |
+| 语音 | 点 🎙 开始/停止录音 | `POST /v1/inputs/audio`（multipart，WebM） |
+
+语音的转写文本会优先作为模型输入；`voiceprint_event == "wakeup"` 直接驱动唤醒态。
+
+### 提示词切换
+
+面板顶部可切换提示词配置（数据来自模型层 `GET /v1/prompts/profiles`）。
+采用**每轮覆盖**语义，切换后下一轮即生效，不需要重建会话。
+拿不到配置列表时静默回落到默认配置，不影响对话。
 
 ### 系统集成
 
@@ -226,7 +244,7 @@ data: {"event_id":"…","session_id":"…","content":"完整文本","stream":fal
 | 项 | 选择 | 理由 |
 |---|---|---|
 | 桌面框架 | **Tauri 2** | 单文件 7.94MB，对比 Electron 215MB（约 27 倍）；常驻内存更小 |
-| 前端 | 原生 TypeScript + Vite | 无框架，产物仅 31.5KB，启动开销低 |
+| 前端 | 原生 TypeScript + Vite | 无框架，产物仅 38.6KB，启动开销低 |
 | 形象渲染 | 可替换接口 + 默认 SVG | 与编排解耦，为正式形象预留 |
 | 上游通信 | 主进程代理 | 绕开 CORS 且**不削弱**上游安全策略（见 [`docs/cors-and-proxy.md`](docs/cors-and-proxy.md)） |
 
@@ -237,7 +255,7 @@ data: {"event_id":"…","session_id":"…","content":"完整文本","stream":fal
 ## 🧪 测试
 
 ```powershell
-npm test           # 65 个用例（契约 / 编排 / SSE / 全链路 / 降级）
+npm test           # 87 个用例（契约 / 编排 / SSE / 多模态 / 全链路 / 降级）
 npm run typecheck  # 类型检查
 cargo test --release --manifest-path src-tauri/Cargo.toml   # 4 个 Rust 单测
 ```
@@ -245,8 +263,10 @@ cargo test --release --manifest-path src-tauri/Cargo.toml   # 4 个 Rust 单测
 | 套件 | 用例 | 覆盖内容 |
 |---|---|---|
 | `contracts` | 21 | 三个上游契约解析、前向兼容、坏数据 |
-| `orchestrator` | 17 | 状态机、事件归并、幂等、降级、音画同步 |
+| `orchestrator` | 22 | 状态机、事件归并、幂等、降级、多模态、唤醒态 |
+| `multimodal` | 11 | multipart 构造、图像/语音上传、提示词接口 |
 | `sse` | 13 | 分帧、keep-alive、坏帧容错、失败序列 |
+| `multimodal-live` | 6 | **真实上游**的图像/语音上传与提示词覆盖 |
 | `full-chain` | 8 | **真实三模块**串完整链路（含音频可下载校验） |
 | `degradation` | 6 | 指向死端口的真实降级 |
 | Rust 单测 | 4 | 回环白名单、贴边阈值 |
@@ -257,6 +277,8 @@ cargo test --release --manifest-path src-tauri/Cargo.toml   # 4 个 Rust 单测
 
 - 完整回合 input → SSE(37 个 delta) → TTS：约 2.8s，音频 46ms 解码、时长 17.088s
 - 探活三模块并行：318ms
+- 图像上传（经主进程代理）：返回 `modality=image` 与受控媒体 URL
+- 提示词：列出 1 项配置；带 `prompt_profile` 的回合正常产出文本与语音
 
 测试范围、降级覆盖与 5 个根因分析见 **[测试报告](docs/TEST_REPORT.md)**。
 

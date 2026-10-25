@@ -11,6 +11,8 @@
 
 use std::time::{Duration, Instant};
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime};
 
@@ -24,6 +26,12 @@ pub struct ProxyRequest {
     pub method: String,
     #[serde(default)]
     pub body: Option<String>,
+    /// 二进制请求体（base64）。用于图像/语音的 multipart 上传。
+    ///
+    /// 为什么走 base64：前端与主进程之间是 JSON IPC，无法直接传字节。
+    /// 解码后原样转发，Content-Type 由前端给出的 multipart 边界头决定。
+    #[serde(default)]
+    pub body_base64: Option<String>,
     /// 额外请求头（键值对）
     #[serde(default)]
     pub headers: Vec<(String, String)>,
@@ -108,7 +116,14 @@ pub async fn upstream_request<R: Runtime>(
     for (key, value) in &request.headers {
         builder = builder.header(key, value);
     }
-    if let Some(body) = &request.body {
+    if let Some(encoded) = &request.body_base64 {
+        // 图像/语音上传：解码为原始字节再转发
+        let bytes = BASE64_STANDARD.decode(encoded).map_err(|error| ProxyError {
+            kind: "encode".into(),
+            message: format!("二进制请求体解码失败：{error}"),
+        })?;
+        builder = builder.body(bytes);
+    } else if let Some(body) = &request.body {
         builder = builder.body(body.clone());
     }
 

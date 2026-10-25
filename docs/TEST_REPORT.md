@@ -19,12 +19,14 @@
 | 套件 | 用例数 | 结果 | 说明 |
 |---|---|---|---|
 | `tests/contracts.test.ts` | 21 | ✅ 通过 | 三个上游的事件契约解析、前向兼容、坏数据 |
-| `tests/orchestrator.test.ts` | 17 | ✅ 通过 | 状态机、事件归并、幂等、降级、音画同步 |
+| `tests/orchestrator.test.ts` | 22 | ✅ 通过 | 状态机、事件归并、幂等、降级、多模态、唤醒态 |
+| `tests/multimodal.test.ts` | 11 | ✅ 通过 | multipart 构造、图像/语音上传报文、提示词接口 |
 | `tests/sse.test.ts` | 13 | ✅ 通过 | SSE 分帧、keep-alive、坏帧、失败序列 |
+| `tests/integration/multimodal-live.test.ts` | 6 | ✅ 通过 | **真实上游**的图像/语音上传与提示词覆盖 |
 | `tests/integration/full-chain.test.ts` | 8 | ✅ 通过 | **真实三模块**全链路 |
 | `tests/integration/degradation.test.ts` | 6 | ✅ 通过 | 指向死端口的真实降级 |
 | `src-tauri` Rust 单测 | 4 | ✅ 通过 | 回环地址白名单、贴边阈值 |
-| **合计** | **69** | **✅ 全部通过** | |
+| **合计** | **91** | **✅ 全部通过** | JS/TS 87 + Rust 4 |
 
 浏览器端另有 CDP 驱动的端到端验证（见 §4），不纳入自动化计数，因为需要真实上游在线。
 
@@ -201,22 +203,59 @@ snapshot.degraded === true ✅   （UI 会显示「语音不可用」徽标）
 
 ---
 
-## 6. 已知限制
+## 6. 结构图逐项核对
+
+按项目结构图（部门四：总线与 UI 层）逐条核对实现状态：
+
+| 结构图条目 | 状态 | 证据 |
+|---|---|---|
+| 桌面宠物悬浮窗 | ✅ | `src-tauri/src/main.rs`：无边框/透明/置顶/`skip_taskbar` |
+| 托盘 | ✅ | 菜单四项：显示隐藏、勿扰、置顶、退出 |
+| 置顶 / 吸附 | ✅ | `set_always_on_top` + `snap_to_edges`（24px） |
+| 勿扰 | ✅ | 托盘项 + 状态变量 + 前端变灰/静音 |
+| 快捷唤起 | ✅ | `Ctrl+Alt+D`、`Ctrl+Alt+Q`（主进程注册） |
+| 状态机：默认→唤醒→对话→情感（预留） | ✅ | `UiState` 五值（含 degraded），`emotion` 为预留位 |
+| 形象渲染层（可替换，一期 logo） | ✅ | `AvatarRenderer` 接口 + 注册表 + `LogoAvatarRenderer` |
+| 消费输出事件 (event_id/text/audio_ref/style) | ✅ | `parseOutputEvent` + `applyOutput` |
+| 文字输入 | ✅ | 输入框 → `/v1/inputs/text` |
+| 图像输入 | ✅ **本次补齐** | 🖼 按钮 → `/v1/inputs/image`（multipart） |
+| 语音输入 | ✅ **本次补齐** | 🎙 录音 → `/v1/inputs/audio`（WebM） |
+| 声纹唤醒驱动唤醒态 | ✅ **本次补齐** | `voiceprint_event == "wakeup"` 分支 |
+| 提示词操作（供 UI 调用） | ✅ **本次补齐** | 顶部下拉 + `GET /v1/prompts/profiles` + 每轮 `prompt_profile` |
+| 失败降级 → 纯文本 | ✅ | `text_fallback` → 保留文本 + 徽标提示 |
+
+### 6.1 本次核对中发现的缺口（已修复）
+
+| 缺口 | 原状 | 修复 |
+|---|---|---|
+| UI 只有文字入口 | 结构图画了三路输入，实现只有一路 | 加图像/语音入口与对应适配器 |
+| 声纹唤醒未驱动状态 | `wake()` 只有热键调用，注释与实现不符 | `submit` 内读 `voiceprint_event` |
+| 提示词接口未接入 | 只在 `meta` 帧被动解析 `prompt_profile` | 新增列表接口 + 下拉 + 按轮覆盖 |
+| 代理不支持二进制 | 主进程代理只能传字符串，无法上传文件 | 增加 `body_base64` 通道 |
+
+新增 22 个用例覆盖上述改动（multimodal 11 + orchestrator 5 + live 6）。
+
+---
+
+## 7. 已知限制
 
 1. **GUI 窗口无法在本机启动**：WebView2 运行时在当前会话中初始化失败
    （`msedgewebview2.exe` 启动即退出码 13）。因此窗口级行为（置顶、吸附、托盘、热键）
    只做了**编译与单元级验证**，未做真机交互验证。详见 `selection-report.md` §2.2。
    这是**测试环境限制**，不是代码缺陷；用户桌面环境（Windows 10/11 自带 WebView2）不受影响。
-2. **Electron 对照基准未能取得运行数据**：会话注入 `ELECTRON_RUN_AS_NODE=1`，
+2. **语音录音未做真机验证**：`MediaRecorder` 需要麦克风权限与可用音频设备。
+   上传链路本身已用真实 WAV 文件跑通（见 `multimodal-live`），但「按按钮录音」这一段
+   依赖真实设备，未在有麦克风的会话中验证。
+3. **Electron 对照基准未能取得运行数据**：会话注入 `ELECTRON_RUN_AS_NODE=1`，
    任何 Electron 进程都被降级。已在选型报告中如实披露，未用估算值替代。
-3. `echo:echo` 是离线诊断模型，其输出是固定模板而非真实 LLM 回答。因此本报告验证的是
+4. `echo:echo` 是离线诊断模型，其输出是固定模板而非真实 LLM 回答。因此本报告验证的是
    **链路与契约正确性**，不是「模型回答质量」。
-4. edge TTS 需要外网访问微软服务；离线环境下 output 会走 `text_fallback`，
+5. edge TTS 需要外网访问微软服务；离线环境下 output 会走 `text_fallback`，
    该路径已由降级测试覆盖。
 
 ---
 
-## 7. 复现方式
+## 8. 复现方式
 
 ```powershell
 # 1) 启动三个上游（详见 tests/integration/README.md）

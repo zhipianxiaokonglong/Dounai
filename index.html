@@ -21,6 +21,10 @@
       <section id="panel" class="panel" hidden>
         <header class="panel__head">
           <span class="panel__title">Dounai</span>
+          <!-- 提示词切换：模型层「预留更换接口供 UI 调用」 -->
+          <select id="prompt-select" class="panel__select" title="提示词配置" aria-label="提示词配置">
+            <option value="">默认人格</option>
+          </select>
           <span id="model-hint" class="panel__hint"></span>
           <button id="btn-close" class="icon-btn" title="收起" aria-label="收起">×</button>
         </header>
@@ -31,7 +35,21 @@
 
         <div id="notice" class="panel__notice" hidden></div>
 
+        <!-- 三路输入：文字 / 图像 / 语音（对应结构图的三个输入入口） -->
         <form id="composer" class="panel__composer">
+          <button id="btn-image" class="tool-btn" type="button" title="发送图片" aria-label="发送图片">
+            🖼
+          </button>
+          <button
+            id="btn-voice"
+            class="tool-btn"
+            type="button"
+            data-recording="false"
+            title="按住说话（点击开始/结束）"
+            aria-label="语音输入"
+          >
+            🎙
+          </button>
           <input
             id="input"
             class="panel__input"
@@ -42,6 +60,14 @@
           />
           <button id="btn-send" class="send-btn" type="submit" aria-label="发送">↵</button>
         </form>
+
+        <!-- 隐藏的文件选择器：仅通过按钮触发，避免原生控件破坏悬浮窗外观 -->
+        <input
+          id="file-picker"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          hidden
+        />
       </section>
 
       <!-- 音频元素：由编排器控制，不自动播放 -->

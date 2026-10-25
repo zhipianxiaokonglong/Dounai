@@ -17,6 +17,9 @@ import {
   userFacingError,
 } from "../upstream/adapters.js";
 
+/** 构造后的内部标记：本轮是否由声纹唤醒触发 */
+const WAKE_FLAG = Symbol("wake");
+
 export type UiState = "default" | "wakeup" | "talking" | "emotion" | "degraded";
 
 export interface ModuleHealth {
@@ -40,7 +43,20 @@ export interface TurnSnapshot {
   health: ModuleHealth;
   /** 本轮是否发生过降级 */
   degraded: boolean;
+  /** 本轮输入模态，供 UI 区分气泡样式（语音/图像/文字） */
+  modality: "text" | "image" | "audio";
 }
+
+/**
+ * 用户提交的载荷。
+ *
+ * 与结构图一致：UI 侧提供文字 / 图像 / 语音三种入口，
+ * 三者最终都由输入层归一化成同一种事件，再走同一条下游链路。
+ */
+export type SubmitPayload =
+  | { kind: "text"; text: string }
+  | { kind: "image"; bytes: Uint8Array; filename?: string; mime?: string }
+  | { kind: "audio"; bytes: Uint8Array; filename?: string; mime?: string; language?: string };
 
 export interface OrchestratorEvents {
   onSnapshot(snapshot: TurnSnapshot): void;
@@ -60,6 +76,7 @@ const IDLE_SNAPSHOT: TurnSnapshot = {
   // 真正的不可用由 probe() 的结果覆盖（见 docs/architecture.md §6）。
   health: { input: true, llm: true, output: true },
   degraded: false,
+  modality: "text",
 };
 
 export class Orchestrator {
@@ -103,12 +120,20 @@ export class Orchestrator {
   /**
    * 处理一条用户输入，走完整链路。
    *
+   * 支持文字 / 图像 / 语音三种模态（对应结构图的三个输入入口）。
    * 返回本轮结果快照。任何阶段失败都会落到 degraded 或「仅文本」，
    * 不向上抛异常——UI 永远不应该因为上游问题而崩溃。
    */
-  async submit(text: string, options: { sessionId?: string; model?: string } = {}): Promise<TurnSnapshot> {
-    const trimmed = text.trim();
-    if (!trimmed) return this.getSnapshot();
+  async submit(
+    payload: SubmitPayload | string,
+    options: { sessionId?: string; model?: string; promptProfile?: string } = {},
+  ): Promise<TurnSnapshot> {
+    // 允许直接传字符串：调用方只关心「发一句话」时不必构造对象
+    const input: SubmitPayload =
+      typeof payload === "string" ? { kind: "text", text: payload } : payload;
+
+    // 文字为空时不发起请求，避免无意义的空回合
+    if (input.kind === "text" && !input.text.trim()) return this.getSnapshot();
 
     this.patch({
       state: "wakeup",
@@ -117,14 +142,40 @@ export class Orchestrator {
       audioUrl: null,
       notice: null,
       degraded: false,
+      modality: input.kind,
     });
 
-    // 1) input：把用户输入变成标准事件
+    // 1) input：把用户输入归一化成标准事件
     let inputEvent;
     try {
-      const result = await this.adapters.input.submitText(trimmed, options.sessionId);
+      const result =
+        input.kind === "text"
+          ? await this.adapters.input.submitText(input.text.trim(), options.sessionId)
+          : input.kind === "image"
+            ? await this.adapters.input.submitImage(
+                { bytes: input.bytes, filename: input.filename, mime: input.mime },
+                options.sessionId,
+              )
+            : await this.adapters.input.submitAudio(
+                {
+                  bytes: input.bytes,
+                  filename: input.filename,
+                  mime: input.mime,
+                  language: input.language,
+                },
+                options.sessionId,
+              );
+
       inputEvent = result.event;
+
+      // 结构图：声纹识别/唤醒（本地）→ voiceprint_event: wakeup → 唤醒态
+      // 这是「唤醒态」的唯一上游来源；热键只是本地补充入口。
+      if (inputEvent.metadata.voiceprint_event === "wakeup") {
+        this.patch({ state: "wakeup" });
+      }
+
       if (result.degraded.degraded) {
+        // 输入层的降级只存在于响应头（如语音未转写成功），必须显式告知用户
         this.patch({ degraded: true, notice: degradedNotice("input") });
       }
     } catch (error) {
@@ -143,9 +194,11 @@ export class Orchestrator {
       finalEvent = await this.adapters.llm.runTurn(
         {
           eventId: inputEvent.event_id,
+          // 语音输入优先用转写文本；图像输入用事件 content（受控媒体 URL）
           text: inputEvent.metadata.asr_text || inputEvent.content,
           sessionId: options.sessionId,
           model: options.model,
+          promptProfile: options.promptProfile,
         },
         {
           onDelta: (event) => {

@@ -17,7 +17,7 @@ import {
 } from "../upstream/adapters.js";
 import { createAvatar, registerAvatar, DEFAULT_AVATAR_ID, type AvatarState } from "../avatar/types.js";
 import { LogoAvatarRenderer } from "../avatar/renderers/logo.js";
-import { loadSettings } from "./settings.js";
+import { loadSettings, saveSettings } from "./settings.js";
 import { mountTrayBridge } from "./bridge.js";
 import { detectRuntime, resolveEndpoints } from "./runtime.js";
 
@@ -39,6 +39,11 @@ const el = {
   close: must<HTMLButtonElement>("btn-close"),
   voice: must<HTMLAudioElement>("voice"),
   modelHint: must<HTMLElement>("model-hint"),
+  // 结构图要求的三路输入入口 + 提示词切换入口
+  btnImage: must<HTMLButtonElement>("btn-image"),
+  btnVoice: must<HTMLButtonElement>("btn-voice"),
+  filePicker: must<HTMLInputElement>("file-picker"),
+  promptSelect: must<HTMLSelectElement>("prompt-select"),
 };
 
 function must<T extends HTMLElement>(id: string): T {
@@ -62,6 +67,8 @@ let pendingText = "";
 let rafHandle = 0;
 let currentBubble: HTMLElement | null = null;
 let busy = false;
+/** 当前选中的提示词配置 ID（空字符串 = 用模型层默认） */
+let currentPromptProfile = settings.promptProfile ?? "";
 
 const orchestrator = new Orchestrator(adapters, {
   onSnapshot: (snapshot) => {
@@ -330,6 +337,47 @@ el.avatarHost.addEventListener("click", () => {
 
 el.close.addEventListener("click", closePanel);
 
+/* 图像入口：点击 → 选文件 → 交给输入层 */
+el.btnImage.addEventListener("click", () => el.filePicker.click());
+el.filePicker.addEventListener("change", () => {
+  const file = el.filePicker.files?.[0];
+  el.filePicker.value = "";
+  if (file) void sendImage(file);
+});
+
+/* 语音入口：点击开始录音，再点结束并上传 */
+el.btnVoice.addEventListener("click", () => void toggleRecording());
+
+/* 提示词切换：直接作用于下一轮（模型层支持每轮覆盖） */
+el.promptSelect.addEventListener("change", () => {
+  currentPromptProfile = el.promptSelect.value;
+  saveSettings({ ...settings, promptProfile: currentPromptProfile });
+});
+
+/** 拉取提示词配置列表；失败时静默保留「默认」一项，不影响对话。 */
+async function loadPromptProfiles(): Promise<void> {
+  const profiles = await adapters.llm.listPromptProfiles();
+  if (profiles.length === 0) {
+    el.promptSelect.disabled = true;
+    el.promptSelect.title = "模型层未提供提示词配置";
+    return;
+  }
+  el.promptSelect.replaceChildren();
+  for (const profile of profiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = profile.name || profile.id;
+    if (profile.id === currentPromptProfile) option.selected = true;
+    el.promptSelect.appendChild(option);
+  }
+  el.promptSelect.disabled = false;
+  // 若保存的配置已不存在，回落到第一个可用项
+  if (!profiles.some((profile) => profile.id === currentPromptProfile)) {
+    currentPromptProfile = profiles[0]?.id ?? "";
+    el.promptSelect.value = currentPromptProfile;
+  }
+}
+
 el.composer.addEventListener("submit", (event) => {
   event.preventDefault();
   void send(el.input.value);
@@ -342,11 +390,14 @@ async function send(raw: string): Promise<void> {
   busy = true;
   el.input.value = "";
   renderControls(lastSnapshot ?? idleSnapshot());
-  appendUserBubble(text);
+  appendUserBubble(text, "text");
   currentBubble = null;
 
   try {
-    const snapshot = await orchestrator.submit(text);
+    const snapshot = await orchestrator.submit(
+      { kind: "text", text },
+      { promptProfile: currentPromptProfile || undefined },
+    );
     syncAudio(snapshot);
     if (!snapshot.audioUrl) orchestrator.notifyTextSettled();
   } finally {
@@ -355,9 +406,114 @@ async function send(raw: string): Promise<void> {
   }
 }
 
-function appendUserBubble(text: string): void {
+/* ------------------------------------------------------------------ */
+/* 图像输入（结构图：图像输入 → 输入层，受控媒体 URL）                   */
+/* ------------------------------------------------------------------ */
+
+async function sendImage(file: File): Promise<void> {
+  if (busy) return;
+  busy = true;
+  renderControls(lastSnapshot ?? idleSnapshot());
+  appendUserBubble(`🖼 图片：${file.name || "粘贴的图片"}`, "image");
+  currentBubble = null;
+
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const snapshot = await orchestrator.submit(
+      {
+        kind: "image",
+        bytes,
+        filename: file.name || undefined,
+        mime: file.type || undefined,
+      },
+      { promptProfile: currentPromptProfile || undefined },
+    );
+    syncAudio(snapshot);
+    if (!snapshot.audioUrl) orchestrator.notifyTextSettled();
+  } catch (error) {
+    showLocalError(error);
+  } finally {
+    busy = false;
+    if (lastSnapshot) renderControls(lastSnapshot);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 语音输入（结构图：语音输入 → 声纹/ASR → 输入层）                     */
+/* ------------------------------------------------------------------ */
+
+let recorder: MediaRecorder | null = null;
+let recordedChunks: Blob[] = [];
+let recording = false;
+
+async function toggleRecording(): Promise<void> {
+  if (recording) {
+    recorder?.stop();
+    return;
+  }
+  if (busy) return;
+
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (error) {
+    showLocalError(error, "无法访问麦克风，请检查系统权限。");
+    return;
+  }
+
+  recordedChunks = [];
+  // WebM/Opus 是 Chromium 下最稳的组合，输入层明确接受 WebM
+  recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data.size > 0) recordedChunks.push(event.data);
+  });
+  recorder.addEventListener("stop", () => {
+    recording = false;
+    stream.getTracks().forEach((track) => track.stop());
+    el.btnVoice.dataset.recording = "false";
+    const blob = new Blob(recordedChunks, { type: "audio/webm" });
+    recordedChunks = [];
+    if (blob.size > 0) void sendAudio(blob);
+  });
+
+  recorder.start();
+  recording = true;
+  el.btnVoice.dataset.recording = "true";
+}
+
+async function sendAudio(blob: Blob): Promise<void> {
+  busy = true;
+  renderControls(lastSnapshot ?? idleSnapshot());
+  appendUserBubble("🎙 语音消息", "audio");
+  currentBubble = null;
+
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const snapshot = await orchestrator.submit(
+      { kind: "audio", bytes, filename: "voice.webm", mime: "audio/webm", language: "zh" },
+      { promptProfile: currentPromptProfile || undefined },
+    );
+    syncAudio(snapshot);
+    if (!snapshot.audioUrl) orchestrator.notifyTextSettled();
+  } catch (error) {
+    showLocalError(error);
+  } finally {
+    busy = false;
+    if (lastSnapshot) renderControls(lastSnapshot);
+  }
+}
+
+function showLocalError(error: unknown, fallback = "操作失败，请重试。"): void {
+  const message = error instanceof Error && error.message ? error.message : fallback;
+  el.notice.hidden = false;
+  el.notice.textContent = fallback === message ? message : `${fallback}（${message}）`;
+  el.notice.dataset.tone = "error";
+}
+
+function appendUserBubble(text: string, modality: "text" | "image" | "audio"): void {
   const node = document.createElement("div");
   node.className = "bubble bubble--user";
+  node.dataset.modality = modality;
   node.textContent = text;
   el.stream.appendChild(node);
   el.emptyHint.hidden = true;
@@ -375,6 +531,7 @@ function idleSnapshot(): TurnSnapshot {
     notice: null,
     health: { input: true, llm: true, output: true },
     degraded: false,
+    modality: "text",
   };
 }
 
