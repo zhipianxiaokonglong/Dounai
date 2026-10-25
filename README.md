@@ -168,16 +168,18 @@ npm install
 npm run dev          # 开发模式：Vite 代理自动转发到三个上游
 ```
 
-打包为单文件可执行程序（已验证）：
+打包为桌面应用（**必须用 `tauri build`**）：
 
 ```powershell
-npm run build
-cargo build --release --manifest-path src-tauri/Cargo.toml
+npm run build                                  # 产出 dist/（前端资源）
+npx tauri build --no-bundle                    # 把 dist 嵌入 exe
 # 产物：src-tauri/target/release/dounai.exe  ≈ 7.9 MB
 ```
 
-> `npx tauri build` 可额外产出 NSIS 安装包，但它需要联网下载打包工具，
-> 离线环境会失败——因此上表给的是**已验证可用**的构建路径。
+> ⚠️ **不要只用 `cargo build`**：那只会编译 Rust 壳，**不会把 `dist/` 嵌进去**，
+> 得到的 exe 打开后是空白窗口。这是 Tauri 的资源嵌入机制决定的，不是配置问题。
+>
+> 要 NSIS 安装包就去掉 `--no-bundle`（需要联网下载打包工具）。
 
 详细步骤、故障排查与隐私说明见 **[用户文档](docs/user-guide.md)**。
 

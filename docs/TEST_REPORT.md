@@ -235,22 +235,79 @@ snapshot.degraded === true ✅   （UI 会显示「语音不可用」徽标）
 
 新增 22 个用例覆盖上述改动（multimodal 11 + orchestrator 5 + live 6）。
 
+### 6.2 隔离环境验收：从 GitHub 全新克隆跑通
+
+为确认「用户按 README 操作能真实运行」，在一台机器的**隔离目录**（`D:\temp\dounai-verify`）
+里从 GitHub 克隆四个仓库、按各自 README 从零安装，结果如下。
+
+**环境搭建**
+
+| 步骤 | 结果 |
+|---|---|
+| 克隆 4 个仓库 | ✅ Dounai 48 / Dounai_input 72 / OmniNexus 79 / MoodVoice 56 文件 |
+| 三个 Python venv + 依赖安装 | ✅ 各自 README 的安装命令均成功 |
+| 上游启动 | ✅ 8101 / 8102 / 8103 全部健康 |
+| `npm install` + `typecheck` + `build` | ✅ 0 错误，dist 38.6KB |
+| `npm test`（上游在线） | ✅ **87 项全过，零跳过** |
+| `npx tauri build --no-bundle` | ✅ 产出 7.95MB exe |
+
+**架构图逐项真实运行**
+
+| 项 | 实测结果 |
+|---|---|
+| 输入事件契约 | ✅ 字段恰为 `{event_id, timestamp, modality, content, metadata}` |
+| 图像输入 | ✅ 201，`modality=image`，`content` 为受控媒体 URL |
+| 伪造图片 | ✅ 被拒 **HTTP 415**（魔数校验生效） |
+| LLM 输出事件 | ✅ 帧序 `meta→route→delta×37→final`，字段与契约一致 |
+| SSE final | ✅ `stream=false`，tags 为 `{emotion,type,intent}` |
+| 输出事件 | ✅ 四要素齐全，`synthesized` 状态 |
+| 音频真实可播 | ✅ 下载 21168 字节，首字节 `0xFF`（MP3 同步头） |
+| 合成耗时 | ✅ 1130ms（首包 766ms） |
+| 状态机 | ✅ 实测序列含 `wakeup → talking`，收敛回 `default` |
+| 音频解码（浏览器） | ✅ `loadedmetadata` 成功，时长 17.088s，18ms |
+| 情感标签透传 | ✅ `emotion/type/intent` 均正确传递 |
+| 图像全链路 | ✅ input → 模型 → 语音 走通，文本 242 字 |
+| 提示词接口 | ✅ 列出 `default`，按轮覆盖生效 |
+| 界面控件 | ✅ 🖼 / 🎙 / 提示词下拉 均存在 |
+| 语音层降级 | ✅ 文本保留 192 字、无音频、`degraded=true`，收敛回 `default` |
+| 输入层降级头 | ✅ `X-Dounai-Degraded` / `Provider` / `Voiceprint-Checked` 齐全 |
+
+**桌面应用窗口级验证**（此前受环境限制未完成，本次通过）
+
+| 项 | 实测结果 |
+|---|---|
+| 应用启动 | ✅ 进程存活，主进程 32.1MB |
+| 窗口可见 | ✅ `IsWindowVisible=true` |
+| 窗口尺寸/位置 | ✅ 360×420，屏幕右下角 (1669, 660) |
+| 界面真实渲染 | ✅ 上部面板区 3163 色、下部形象区亮占比 76.6%（非空白） |
+| 前端 JS 执行 | ✅ 每次启动，OmniNexus 日志精确新增一条 `/v1/healthz` |
+| 代理连通 | ✅ 8101、8102 均捕捉到来自应用的连接 |
+| 进程树内存 | ✅ 8 个进程合计 404.1MB（主进程 32MB + WebView2 渲染进程） |
+
+### 6.3 本次验收发现并修复的 2 个真实缺陷
+
+| 缺陷 | 现象 | 根因 | 修复 |
+|---|---|---|---|
+| **窗口永不显示** | 应用启动后只有托盘图标，看不到悬浮窗；窗口尺寸 14×14 | `build_window` 用了 `.visible(false)`，但 setup 里**从未调用 `show()`**（只有托盘菜单的 toggle 会 show） | setup 末尾 `place_bottom_right()` + `window.show()` |
+| **README 构建指令错误** | 按 README 的 `cargo build --release` 打包，exe 打开是空白窗口 | `cargo build` 只编译 Rust 壳，**不会把 `dist/` 嵌进 exe**；资源嵌入由 `tauri build` 完成 | README 改为 `npx tauri build --no-bundle`，并加警示说明 |
+
 ---
 
 ## 7. 已知限制
 
-1. **GUI 窗口无法在本机启动**：WebView2 运行时在当前会话中初始化失败
-   （`msedgewebview2.exe` 启动即退出码 13）。因此窗口级行为（置顶、吸附、托盘、热键）
-   只做了**编译与单元级验证**，未做真机交互验证。详见 `selection-report.md` §2.2。
-   这是**测试环境限制**，不是代码缺陷；用户桌面环境（Windows 10/11 自带 WebView2）不受影响。
-2. **语音录音未做真机验证**：`MediaRecorder` 需要麦克风权限与可用音频设备。
-   上传链路本身已用真实 WAV 文件跑通（见 `multimodal-live`），但「按按钮录音」这一段
-   依赖真实设备，未在有麦克风的会话中验证。
-3. **Electron 对照基准未能取得运行数据**：会话注入 `ELECTRON_RUN_AS_NODE=1`，
+1. ~~**GUI 窗口无法在本机启动**~~ —— **已在 §6.2 突破**：隔离环境里应用成功启动，
+   窗口 360×420 可见、界面真实渲染、前端 JS 执行并经代理连通上游。
+   早前失败的原因是当时会话的 WebView2 初始化受限；本次换到独立目录重新打包后正常。
+   仍未做人工点按验证的项目见下方第 2、3 条。
+2. **语音录音未做真人点按验证**：`MediaRecorder` 需要麦克风权限与可用音频设备。
+   上传链路已用真实 WAV/WebM 跑通（见 `multimodal-live`），缺的是「按 🎙 录音」这一步的设备交互。
+3. **托盘菜单与热键未做人工点按验证**：菜单四项与 `Ctrl+Alt+D` / `Ctrl+Alt+Q` 已注册成功、
+   编译通过，但需要人工在桌面点击确认。这类交互无法用脚本可靠断言。
+4. **Electron 对照基准未能取得运行数据**：会话注入 `ELECTRON_RUN_AS_NODE=1`，
    任何 Electron 进程都被降级。已在选型报告中如实披露，未用估算值替代。
-4. `echo:echo` 是离线诊断模型，其输出是固定模板而非真实 LLM 回答。因此本报告验证的是
+5. `echo:echo` 是离线诊断模型，其输出是固定模板而非真实 LLM 回答。因此本报告验证的是
    **链路与契约正确性**，不是「模型回答质量」。
-5. edge TTS 需要外网访问微软服务；离线环境下 output 会走 `text_fallback`，
+6. edge TTS 需要外网访问微软服务；离线环境下 output 会走 `text_fallback`，
    该路径已由降级测试覆盖。
 
 ---

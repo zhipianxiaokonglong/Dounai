@@ -40,6 +40,10 @@ fn main() {
             attach_window_events(&window);
             build_tray(app.handle())?;
             register_shortcuts(app.handle())?;
+            // 启动即显示：本产品是常驻桌面的悬浮窗，用户双击图标后应当直接看到它。
+            // 窗口以 visible(false) 建出，是为了等位置算好再显示，避免在默认位置闪一下。
+            place_bottom_right(&window);
+            let _ = window.show();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -87,6 +91,31 @@ fn attach_window_events<R: Runtime>(window: &WebviewWindow<R>) {
         }
         _ => {}
     });
+}
+
+/// 把悬浮窗放到主显示器右下角，并留出任务栏余量。
+///
+/// 首次启动如果沿用系统默认位置，会出现在屏幕中央偏上，与「桌面宠物」的预期位置不符，
+/// 也容易挡住用户正在看的窗口。
+fn place_bottom_right<R: Runtime>(window: &WebviewWindow<R>) {
+    use tauri::PhysicalPosition;
+
+    let Some(monitor) = window.current_monitor().ok().flatten() else {
+        return;
+    };
+    let screen = monitor.size();
+    let origin = monitor.position();
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+
+    // 90px 给任务栏留白，避免贴死屏幕底部
+    const MARGIN: i32 = 24;
+    const TASKBAR: i32 = 90;
+
+    let x = origin.x + screen.width as i32 - size.width as i32 - MARGIN;
+    let y = origin.y + screen.height as i32 - size.height as i32 - TASKBAR;
+    let _ = window.set_position(Position::Physical(PhysicalPosition::new(x.max(origin.x), y.max(origin.y))));
 }
 
 /// 贴边吸附：靠近屏幕左右/上下边缘时对齐，减少「悬浮窗卡在半空」的别扭感。
