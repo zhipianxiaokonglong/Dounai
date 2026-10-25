@@ -13,14 +13,14 @@
 
 ## 📦 模块地图
 
-Dounai 是模块化产品，每个模块都能独立运行、独立测试：
+Dounai 是模块化产品，各模块独立运行、独立测试，且各自独立发布：
 
-| 模块 | 职责 | 仓库 |
-|---|---|---|
-| 输入层 | 文字 / 图像 / 语音接入、声纹唤醒、多厂商适配 | [`Dounai_input`](https://github.com/zhipianxiaokonglong/Dounai_input) |
-| 模型层 | 模型路由、提示词、上下文、联网检索、情感打标 | [`OmniNexus`](https://github.com/zhipianxiaokonglong/OmniNexus) |
-| 语音层 | 标签驱动的情感 TTS、文本渲染切块、优雅降级 | MoodVoice |
-| **组装层（本仓库）** | **事件编排、悬浮窗 UI、系统集成、用户文档** | **Dounai** |
+| 模块 | 职责 | 仓库 | 包名 |
+|---|---|---|---|
+| 输入层 | 文字 / 图像 / 语音接入、声纹唤醒、多厂商适配 | [`Dounai_input`](https://github.com/zhipianxiaokonglong/Dounai_input) | `dounai-input` |
+| 模型层 | 模型路由、提示词、上下文、联网检索、情感打标 | [`OmniNexus`](https://github.com/zhipianxiaokonglong/OmniNexus) | `omninexus` |
+| 语音层 | 标签驱动的情感 TTS、文本渲染切块、优雅降级 | [`MoodVoice`](https://github.com/zhipianxiaokonglong/MoodVoice) | `moodvoice-emotional-tts` |
+| **组装层（本仓库）** | **事件编排、悬浮窗 UI、系统集成、用户文档** | **Dounai** | — |
 
 本仓库**只通过约定的事件契约**与上游对接，不依赖其内部实现（契约见
 [`docs/contracts.md`](docs/contracts.md)）。
@@ -37,16 +37,17 @@ Dounai 是模块化产品，每个模块都能独立运行、独立测试：
 本仓库**自包含、可独立构建**：克隆后 `npm install && npm run build` 即可产出悬浮窗，
 不需要任何其他仓库的源码（已用干净克隆验证：47 个文件、零外部路径引用）。
 
-它**运行时不包含**三个上游，这是设计而非缺漏——上游各自独立发布，通过 HTTP 契约对接：
+它**运行时不包含**三个上游，这是设计而非缺漏——上游通过 HTTP 契约对接：
 
 | 需要什么 | 谁提供 | 本仓库是否包含 |
 |---|---|---|
 | 悬浮窗全部代码、构建脚本、图标、文档 | 本仓库 | ✅ 全部包含 |
-| 三个上游的源码 | 各自仓库 | ❌ 按设计不包含，见上表链接 |
+| 三个上游的源码 | 各自公开仓库 | ❌ 按设计不包含，可自行克隆 |
 | Node ≥ 20、Rust ≥ 1.77、WebView2 | 用户环境 | ❌ 工具链/系统组件 |
 | npm 与 crates 依赖 | 包管理器按 `package.json` / `Cargo.toml` 拉取 | ❌ 不入库（`.gitignore` 已排除） |
 
-> 只跑单元测试不需要上游；集成测试需要三个上游在运行，未启动时会自动跳过。
+> 只跑单元测试不需要任何上游；集成测试需要上游在运行，未启动时会自动跳过。
+> 任一上游缺失都不是错误——组装层会降级显示，文本对话照常。
 
 ---
 

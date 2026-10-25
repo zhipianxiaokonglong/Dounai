@@ -23,9 +23,9 @@
 
 | 模块 | 仓库 | 本项目默认端口 |
 |---|---|---|
-| 输入层 | `Dounai_input` | `8101` |
-| 模型层 | `OmniNexus` | `8102` |
-| 语音层 | `MoodVoice` | `8103` |
+| 输入层 | [`Dounai_input`](https://github.com/zhipianxiaokonglong/Dounai_input) | `8101` |
+| 模型层 | [`OmniNexus`](https://github.com/zhipianxiaokonglong/OmniNexus) | `8102` |
+| 语音层 | [`MoodVoice`](https://github.com/zhipianxiaokonglong/MoodVoice) | `8103` |
 
 > ⚠️ 注意：输入层与模型层的**出厂默认端口都是 8000**，同机运行必须错开。
 > 本项目默认用 8101/8102/8103，你需要让上游也用这些端口，或在本项目设置里改。

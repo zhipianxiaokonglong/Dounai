@@ -3,8 +3,13 @@
 集成测试用**真实上游**验证契约，不 mock。未启动时会自动跳过，不阻塞常规单测。
 
 > **前提**：本仓库是组装层，本身不包含三个上游的源码。
-> 你需要另外把 `Dounai_input`、`OmniNexus`、`MoodVoice` 三个仓库克隆到**任意位置**
-> （下面用 `$INPUT_REPO` / `$LLM_REPO` / `$TTS_REPO` 表示它们的路径）。
+> 你需要另外克隆这三个公开仓库到**任意位置**（下面用 `$INPUT_REPO` / `$LLM_REPO` / `$TTS_REPO` 表示）：
+>
+> | 变量 | 仓库 |
+> |---|---|
+> | `$INPUT_REPO` | `https://github.com/zhipianxiaokonglong/Dounai_input` |
+> | `$LLM_REPO` | `https://github.com/zhipianxiaokonglong/OmniNexus` |
+> | `$TTS_REPO` | `https://github.com/zhipianxiaokonglong/MoodVoice` |
 
 ## 1. 端口约定
 
