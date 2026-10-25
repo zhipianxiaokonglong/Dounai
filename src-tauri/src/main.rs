@@ -29,7 +29,22 @@ struct AppState {
 }
 
 fn main() {
+    // 单实例保护：桌面驻留应用被重复双击时，必须把已有窗口唤到前面，
+    // 而不是再起一个进程。
+    //
+    // 没有这道保护时的真实表现：用户点两次图标 → 两个进程 → 任务栏出现
+    // 两个一模一样的 Dounai 图标，其中一个属于「后来的、没抢到焦点」的实例，
+    // 看起来就是「一个能点、一个不能点」。这是本次用户反馈的直接原因。
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.unminimize();
+                let _ = app.emit("dounai://wake", ());
+            }
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppState {
             do_not_disturb: Mutex::new(false),
@@ -212,6 +227,16 @@ fn snap_to_edges<R: Runtime>(
 }
 
 fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    // 防止重复创建：如果托盘里已经有同名图标就直接复用。
+    //
+    // 之前 tauri.conf.json 的 app.trayIcon 会让 Tauri 在 setup 之前自动建一个
+    // id 为 "main" 的图标（无菜单、无事件），这里再建一个同 id 的，
+    // 结果任务栏出现两个一样的图标，其中一个点了没反应。
+    // 现在配置里的 trayIcon 已删除，并且加这道检查避免将来再被重复创建。
+    if app.tray_by_id("main").is_some() {
+        return Ok(());
+    }
+
     let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
     let dnd = MenuItem::with_id(app, "dnd", "勿扰模式", true, None::<&str>)?;
     let top = MenuItem::with_id(app, "top", "窗口置顶", true, None::<&str>)?;
@@ -224,8 +249,9 @@ fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
             tauri::image::Image::new_owned(vec![0, 0, 0, 0], 1, 1)
         }))
-        .tooltip("Dounai")
+        .tooltip("Dounai — 左键显示/隐藏，右键菜单")
         .menu(&menu)
+        // 左键点击直接切换窗口；右键才弹菜单
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle" => toggle_window(app),
@@ -234,15 +260,18 @@ fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             "quit" => app.exit(0),
             _ => {}
         })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
-            } = event
-            {
-                toggle_window(tray.app_handle());
-            }
+            } => toggle_window(tray.app_handle()),
+            // 双击也当作切换，避免用户以为需要双击
+            TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => toggle_window(tray.app_handle()),
+            _ => {}
         })
         .build(app)?;
 

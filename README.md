@@ -162,7 +162,37 @@ curl http://127.0.0.1:8102/v1/healthz
 curl http://127.0.0.1:8103/api/health
 ```
 
-### 2. 启动悬浮窗
+### 2. 配好模型（关键一步）
+
+悬浮窗**不碰密钥**，模型全部由模型层提供。没配好的话，界面会提示
+「还没有可用的模型」。
+
+**最快跑通（零密钥）**：在模型层 `config/default.yaml` 里把 `echo` 段改成
+`enabled: true`，重启模型层，然后在悬浮窗里发消息即可。`echo` 是离线诊断模型，
+输出固定模板，用来验证链路。
+
+**接真实厂商（BYOK）**：在**模型层仓库根目录**建 `.env`：
+
+```powershell
+cd <模型层仓库路径>
+Copy-Item .env.example .env
+notepad .env          # 填入 DEEPSEEK_API_KEY=sk-... 之类
+python -m omninexus   # 必须在这个目录启动，.env 才读得到
+```
+
+验证：
+
+```powershell
+curl http://127.0.0.1:8102/v1/providers   # 你配的那家 available 应为 true
+```
+
+> 新手最容易踩的坑：**没在模型层根目录启动**，`.env` 读不到，
+> 表现为所有模型 `available=false`。
+
+完整教程（16 家厂商清单、本地 Ollama、语音厂商、排错清单）见
+**[如何设置模型](docs/model-setup.md)**。
+
+### 3. 启动悬浮窗
 
 ```powershell
 npm install
@@ -334,6 +364,7 @@ cargo test --release --manifest-path src-tauri/Cargo.toml   # 4 个 Rust 单测
 
 | 文档 | 内容 |
 |---|---|
+| [**如何设置模型**](docs/model-setup.md) | **零密钥跑通、16 家厂商接入、本地 Ollama、语音厂商、排错清单** |
 | [用户文档](docs/user-guide.md) | 安装、使用、隐私、故障排查、更换形象 |
 | [架构设计](docs/architecture.md) | 分层、状态机、降级矩阵、性能预算 |
 | [事件契约](docs/contracts.md) | 与三个上游的完整接口约定 |

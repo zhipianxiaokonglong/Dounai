@@ -17,6 +17,7 @@ anyhow = "1.0.104"
 url = "2.5.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 base64 = "0.23.1"
+tauri-plugin-single-instance = "2.5.4"
 
 [profile.release]
 codegen-units = 1
