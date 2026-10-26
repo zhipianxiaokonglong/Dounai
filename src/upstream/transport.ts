@@ -37,9 +37,16 @@ interface TauriInvoke {
   (cmd: string, args?: Record<string, unknown>): Promise<unknown>;
 }
 
+interface TauriGlobal {
+  /** Tauri 2：invoke 位于 `core` 命名空间（`window.__TAURI__.core.invoke`）。 */
+  core?: { invoke?: TauriInvoke };
+  /** Tauri 1 旧结构的兜底。 */
+  invoke?: TauriInvoke;
+}
+
 function tauriInvoke(): TauriInvoke | null {
-  const tauri = (globalThis as { __TAURI__?: { invoke?: TauriInvoke } }).__TAURI__;
-  return tauri?.invoke ?? null;
+  const tauri = (globalThis as { __TAURI__?: TauriGlobal }).__TAURI__;
+  return tauri?.core?.invoke ?? tauri?.invoke ?? null;
 }
 
 export function transportMode(): TransportMode {

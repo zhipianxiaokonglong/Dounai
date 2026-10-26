@@ -21,6 +21,9 @@ interface TauriEventApi {
 }
 
 interface TauriGlobal {
+  /** Tauri 2：invoke 位于 `core` 命名空间（`window.__TAURI__.core.invoke`）。 */
+  core?: { invoke?: TauriInvoke };
+  /** Tauri 1 旧结构的兜底。 */
   invoke?: TauriInvoke;
   event?: TauriEventApi;
 }
@@ -61,9 +64,10 @@ export function mountTrayBridge(bridge: TrayBridge): void {
 /** 通知主进程当前面板可见性，用于主进程决定是否吸附/穿透。 */
 export async function notifyPanelVisibility(visible: boolean): Promise<void> {
   const tauri = getTauri();
-  if (!tauri?.invoke) return;
+  const invoke = tauri?.core?.invoke ?? tauri?.invoke;
+  if (!invoke) return;
   try {
-    await tauri.invoke("set_panel_visible", { visible });
+    await invoke("set_panel_visible", { visible });
   } catch {
     // 主进程未实现该命令时不影响 UI
   }
