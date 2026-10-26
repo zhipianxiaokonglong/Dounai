@@ -97,6 +97,7 @@ function render(snapshot: TurnSnapshot, text: string): void {
 
   el.app.dataset.state = snapshot.state;
   renderBadge(snapshot);
+  renderWelcomeHint(snapshot.health);
   renderStream(snapshot, text);
   renderNotice(snapshot);
   renderControls(snapshot);
@@ -131,6 +132,45 @@ function showBadge(text: string, tone: "ok" | "warn" | "error"): void {
 
 function hideBadge(): void {
   el.badge.hidden = true;
+}
+
+/**
+ * 降级欢迎态：无上游可用时，空态区改成可操作的排障指引。
+ *
+ * 任务书要求「总装壳可独立启动（无模块时进入降级欢迎态），不得白屏崩溃」。
+ * 只显示一个徽标是不够的——用户面对一个发不出消息的输入框，
+ * 会以为是自己操作错了。这里把「缺什么、怎么办」直接写在对话区。
+ */
+function renderWelcomeHint(health: TurnSnapshot["health"]): void {
+  const missing: string[] = [];
+  if (!health.input) missing.push("输入层");
+  if (!health.llm) missing.push("模型层");
+  if (!health.output) missing.push("语音层");
+
+  // 全部就绪：显示正常的开场白
+  if (missing.length === 0) {
+    el.emptyHint.textContent = "说点什么吧，我在。";
+    el.emptyHint.dataset.degraded = "false";
+    return;
+  }
+
+  // 语音层缺失不算致命：对话仍可用，只是没有声音
+  const blocking = !health.input || !health.llm;
+  const lines: string[] = [];
+  lines.push(blocking ? "上游服务还没连接上。" : "文字对话可用，语音暂不可用。");
+  lines.push("");
+  lines.push(`未连接：${missing.join("、")}`);
+  lines.push("");
+  lines.push("请在对应仓库启动服务后重试：");
+  if (!health.input) lines.push("  · 输入层  :8101  dounai-input serve");
+  if (!health.llm) lines.push("  · 模型层  :8102  python -m omninexus");
+  if (!health.output) lines.push("  · 语音层  :8103  python -m emotional_tts serve");
+  lines.push("");
+  lines.push("模型没配好也会导致这里显示未连接，");
+  lines.push("详见 docs/model-setup.md（如何设置模型）。");
+
+  el.emptyHint.textContent = lines.join("\n");
+  el.emptyHint.dataset.degraded = blocking ? "true" : "false";
 }
 
 function renderStream(snapshot: TurnSnapshot, text: string): void {
@@ -597,9 +637,14 @@ el.modelHint.textContent = settings.model ? `模型：${settings.model}` : "自�
 void (async () => {
   const health = await orchestrator.probe();
   if (lastSnapshot) render(lastSnapshot, "");
-  if (health.input && health.llm) {
-    openPanel();
-  } else {
+
+  // 无论上游是否就绪都展开面板：
+  //  - 就绪 → 正常对话；
+  //  - 未就绪 → 展示降级欢迎态里的排障指引（任务书 §4.4「不得白屏」）。
+  // 之前降级时只显示徽标、面板保持收起，用户只能看到一个 logo，
+  // 不知道发生了什么，也不知道该做什么。
+  openPanel();
+  if (!health.input || !health.llm) {
     showBadge("部分服务未连接", "error");
   }
 })();

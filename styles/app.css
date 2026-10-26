@@ -276,6 +276,15 @@ body {
 .panel__empty {
   color: var(--text-dim);
   font-size: 12px;
+  /* 降级欢迎态是多行排障指引，需要保留换行并允许滚动 */
+  white-space: pre-wrap;
+  line-height: 1.7;
+  user-select: text;
+}
+
+/* 阻断型降级（输入/模型层缺失）用警示色，提示这段是需要处理的 */
+.panel__empty[data-degraded="true"] {
+  color: var(--warn);
 }
 
 .bubble {
