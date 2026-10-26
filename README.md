@@ -36,6 +36,22 @@ Dounai 是模块化产品，各模块独立运行、独立测试，且各自独�
 | 语音层 | 标签驱动的情感 TTS、文本渲染切块、优雅降级 | [`MoodVoice`](https://github.com/zhipianxiaokonglong/MoodVoice) | `moodvoice-emotional-tts` |
 | **组装层（本仓库）** | **事件编排、悬浮窗 UI、系统集成、用户文档** | **Dounai** | — |
 
+### 🧰 启动器（管理工具，非运行时模块）
+
+**装、配、修、卸交给启动器，悬浮窗只负责跑。**
+
+| 工具 | 职责 | 仓库 |
+|---|---|---|
+| **启动器** | **安装依赖、环境体检、模块启停、一键套装、本地离线安装** | **[`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher)** |
+
+启动器**不参与上面的事件流**，也不在运行时链路上——它只负责把三个上游与本仓库的
+运行环境装好、配好。手动装也能跑起来，但用启动器可以省掉逐个配端口、装依赖、
+校验下载这一整套手工步骤。
+
+> 首次使用**建议先装启动器**：它会检测 Python / Node / 显卡 / 磁盘，
+> 按最小安装原则只装必需项（大体积模型权重只推荐、不预装），
+> 并在安装失败时自动回滚，不留半残环境。
+
 本仓库**只通过约定的事件契约**与上游对接，不依赖其内部实现（契约见
 [`docs/contracts.md`](docs/contracts.md)）。
 
@@ -142,6 +158,10 @@ Dounai 是模块化产品，各模块独立运行、独立测试，且各自独�
 ---
 
 ## 🚀 快速开始
+
+> **懒人路线**：装 [`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher)，
+> 在界面里勾选套装即可——它会装依赖、配端口、做环境体检。
+> 下面的手工步骤适合想搞清每一步在做什么的人，或需要自行控制版本的情况。
 
 ### 前置
 
@@ -388,6 +408,12 @@ cargo test --release --manifest-path src-tauri/Cargo.toml   # 12 个 Rust 单测
 | [选型报告](docs/selection-report.md) | Electron vs Tauri 实测与跨平台建议 |
 | [同类调研](docs/research.md) | VPet / Shimeji / N0va / Desktop Goose / 豆包 / Raycast / uTools |
 | [测试报告](docs/TEST_REPORT.md) | 测试范围、实测数据、根因分析 |
+
+**相关仓库**
+
+| 仓库 | 说明 |
+|---|---|
+| [`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher) | 启动器：安装、环境体检、模块管理、一键套装、本地离线安装（自有文档见其 `docs/`） |
 
 ---
 
