@@ -3,7 +3,7 @@
 > 一款开源的 AI 情感助手——为孤独而有技术能力的你，提供有温度、且真正属于你自己的智能陪伴。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-87%20passed-brightgreen)](docs/TEST_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-109%20passed-brightgreen)](docs/TEST_REPORT.md)
 ![Status](https://img.shields.io/badge/status-开发中-orange)
 
 **本仓库是 Dounai 的「组装层 + 桌面悬浮窗」**：它把输入层、模型层、语音层三个独立模块
@@ -305,9 +305,9 @@ data: {"event_id":"…","session_id":"…","content":"完整文本","stream":fal
 ## 🧪 测试
 
 ```powershell
-npm test           # 87 个用例（契约 / 编排 / SSE / 多模态 / 全链路 / 降级）
+npm test           # 97 个用例（契约 / 编排 / SSE / 多模态 / 环境探测 / 全链路 / 降级）
 npm run typecheck  # 类型检查
-cargo test --release --manifest-path src-tauri/Cargo.toml   # 4 个 Rust 单测
+cargo test --release --manifest-path src-tauri/Cargo.toml   # 12 个 Rust 单测
 ```
 
 | 套件 | 用例 | 覆盖内容 |
@@ -316,10 +316,11 @@ cargo test --release --manifest-path src-tauri/Cargo.toml   # 4 个 Rust 单测
 | `orchestrator` | 22 | 状态机、事件归并、幂等、降级、多模态、唤醒态 |
 | `multimodal` | 11 | multipart 构造、图像/语音上传、提示词接口 |
 | `sse` | 13 | 分帧、keep-alive、坏帧容错、失败序列 |
+| `transport-mode` | 10 | **Tauri 2 环境探测**（防止桌面端退回浏览器直连） |
 | `multimodal-live` | 6 | **真实上游**的图像/语音上传与提示词覆盖 |
 | `full-chain` | 8 | **真实三模块**串完整链路（含音频可下载校验） |
 | `degradation` | 6 | 指向死端口的真实降级 |
-| Rust 单测 | 4 | 回环白名单、贴边阈值 |
+| Rust 单测 | 12 | 回环白名单、吸附几何（四角/阈值/双屏偏移） |
 
 集成测试用**真实上游**，未启动时会明确打印跳过原因，不会误报失败。
 

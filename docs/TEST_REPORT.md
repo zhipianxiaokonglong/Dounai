@@ -22,11 +22,12 @@
 | `tests/orchestrator.test.ts` | 22 | ✅ 通过 | 状态机、事件归并、幂等、降级、多模态、唤醒态 |
 | `tests/multimodal.test.ts` | 11 | ✅ 通过 | multipart 构造、图像/语音上传报文、提示词接口 |
 | `tests/sse.test.ts` | 13 | ✅ 通过 | SSE 分帧、keep-alive、坏帧、失败序列 |
+| `tests/transport-mode.test.ts` | 10 | ✅ 通过 | **Tauri 2 环境探测**（防「桌面端退回直连」回归，见 §6.6） |
 | `tests/integration/multimodal-live.test.ts` | 6 | ✅ 通过 | **真实上游**的图像/语音上传与提示词覆盖 |
 | `tests/integration/full-chain.test.ts` | 8 | ✅ 通过 | **真实三模块**全链路 |
 | `tests/integration/degradation.test.ts` | 6 | ✅ 通过 | 指向死端口的真实降级 |
-| `src-tauri` Rust 单测 | 4 | ✅ 通过 | 回环地址白名单、贴边阈值 |
-| **合计** | **91** | **✅ 全部通过** | JS/TS 87 + Rust 4 |
+| `src-tauri` Rust 单测 | 12 | ✅ 通过 | 回环白名单、吸附几何（左右上下四角/阈值/双屏偏移） |
+| **合计** | **109** | **✅ 全部通过** | JS/TS 97 + Rust 12 |
 
 浏览器端另有 CDP 驱动的端到端验证（见 §4），不纳入自动化计数，因为需要真实上游在线。
 
@@ -281,8 +282,14 @@ snapshot.degraded === true ✅   （UI 会显示「语音不可用」徽标）
 | 窗口尺寸/位置 | ✅ 360×420，屏幕右下角 (1669, 660) |
 | 界面真实渲染 | ✅ 上部面板区 3163 色、下部形象区亮占比 76.6%（非空白） |
 | 前端 JS 执行 | ✅ 每次启动，OmniNexus 日志精确新增一条 `/v1/healthz` |
-| 代理连通 | ✅ 8101、8102 均捕捉到来自应用的连接 |
+| ~~代理连通~~ | ❌ **当时结论错误，见 §6.6** |
 | 进程树内存 | ✅ 8 个进程合计 404.1MB（主进程 32MB + WebView2 渲染进程） |
+
+> ⚠️ **纠错（2026-10-26）**：上表「代理连通」一项当时判定为 ✅ 是**错误的**。
+> 依据「OmniNexus 日志新增 `/v1/healthz`」只能证明**请求到达了服务端**，
+> 无法证明**前端拿到了响应**——直连模式下请求同样会到达，只是响应被浏览器
+> 的 CORS 规则丢弃。真实情况是桌面端一直走浏览器直连、探活全部失败。
+> 详情与最终修复见 §6.6。
 
 ### 6.3 本次验收发现并修复的 2 个真实缺陷
 
@@ -359,13 +366,68 @@ Rust 测试从 4 项增至 12 项，全部通过。
 `Tauri Window` / `tray_icon_app` / `global_hotkey_app` / `com.dounai.desktop-sic`（单实例锁）
 各 1 个，主进程内存 32.6MB，说明修复未破坏托盘、热键与窗口。
 
+### 6.6 桌面端无法连接上游（外部 PR #1 修复）
+
+**这是本报告此前最大的验证失误，必须记下来。**
+
+**现象**：打包后的 `dounai.exe` 启动后显示「服务未连接」，即使三个上游都在运行；
+浏览器 dev 模式（Vite 代理）完全正常，只在桌面端复现。
+
+**根因（两条叠加）**：
+
+| 缺陷 | 说明 |
+|---|---|
+| `tauri.conf.json` 未设 `withGlobalTauri` | 该字段默认 `false`（见 `tauri-utils-2.10.2` 的 `Default`），所以 `window.__TAURI__` **从未注入** |
+| 前端读取的是 Tauri 1 的结构 | Tauri 2 把 `invoke` 放在 **`__TAURI__.core.invoke`**；`bundle.global.js` 末尾 `e.core=g` 可证。代码里取 `__TAURI__.invoke` 永远是 `undefined` |
+
+两者叠加 → `tauriInvoke()` 返回 `null` → 前端退回**浏览器直连** → 被上游 CORS 拦截：
+
+| 模块 | 直连（带 Origin）结果 |
+|---|---|
+| `input` | 200，但**无 ACAO 头** → 浏览器丢弃响应 |
+| `llm` | 200，但**无 ACAO 头** → 浏览器丢弃响应 |
+| `output` | **403**（Origin 白名单直接拒绝） |
+
+**为什么之前没被发现（我的失误）**：
+
+我把「OmniNexus 日志里新增一条 `/v1/healthz`」当成了「前端经代理连通成功」的证据。
+这个推断不成立：**直连时请求同样会到达服务端**，CORS 是浏览器**读取响应**时才拦截的。
+只验证了「请求发出」，没验证「响应被接受」。
+
+**修复**（由贡献者 Tonyjh07 提交的 PR #1，已合并为 `4af37b8`）：
+
+1. `tauri.conf.json` 开启 `"withGlobalTauri": true`；
+2. `transport.ts` / `bridge.ts` 改为 `__TAURI__.core?.invoke ?? __TAURI__.invoke`（兼容 Tauri 1）；
+3. 补充修复（本次）：`runtime.detectRuntime()` 统一以「invoke 是否可调用」为判据，
+   与 `transportMode()` 口径一致，避免两处判定打架。
+
+**同根因的连带影响**（此前后果被低估）：`bridge.ts` 依赖 `__TAURI__.event`，
+它同样未注入，因此托盘「勿扰模式」广播、面板可见性联动此前**全部失效**；
+修复后一并恢复。
+
+**回归测试**：新增 `tests/transport-mode.test.ts`（10 项），覆盖 Tauri 2 结构、
+Tauri 1 兼容、`__TAURI__` 存在但无 invoke 的中间态、无全局、null 值，以及
+`detectRuntime()` 与 `transportMode()` 口径一致性。
+
+已验证该测试能守住 bug：**同一批用例在修复前失败、修复后通过**：
+
+```text
+修复前: × __TAURI__.core.invoke 存在时判定为 proxy
+        → expected 'direct' to be 'proxy'
+修复后: ✓ 10 passed
+```
+
+**教训**：验证「连通性」必须看**客户端是否接受了响应**，不能只看服务端是否收到请求。
+在浏览器/WebView 语境下，这两件事是分离的。
+
 ---
 
 ## 7. 已知限制
 
 1. ~~**GUI 窗口无法在本机启动**~~ —— **已在 §6.2 突破**：隔离环境里应用成功启动，
-   窗口 360×420 可见、界面真实渲染、前端 JS 执行并经代理连通上游。
-   早前失败的原因是当时会话的 WebView2 初始化受限；本次换到独立目录重新打包后正常。
+   窗口 360×420 可见、界面真实渲染、前端 JS 执行。
+   ⚠️ 但「经代理连通上游」一项当时判断有误，真实情况与修复见 §6.6。
+   早前启动失败的原因是当时会话的 WebView2 初始化受限；换到独立目录重新打包后正常。
    仍未做人工点按验证的项目见下方第 2、3 条。
 2. **语音录音未做真人点按验证**：`MediaRecorder` 需要麦克风权限与可用音频设备。
    上传链路已用真实 WAV/WebM 跑通（见 `multimodal-live`），缺的是「按 🎙 录音」这一步的设备交互。

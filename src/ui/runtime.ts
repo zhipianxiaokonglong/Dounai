@@ -1,7 +1,7 @@
 /**
  * 端点解析：让同一份前端代码在三种环境下都能工作。
  *
- *  1. Tauri 生产：请求经主进程代理（`__TAURI__` 存在），端点仍是 127.0.0.1 直连地址；
+ *  1. Tauri 生产：请求经主进程代理（`__TAURI__.core.invoke` 可调用），端点仍是 127.0.0.1 直连地址；
  *  2. Vite 开发：走 `/api/*` 前缀，由 Vite 代理转发，避开浏览器跨域；
  *  3. 纯静态预览：无代理可用，直连会失败并提示（用于验证降级 UI）。
  *
@@ -11,6 +11,7 @@
  */
 
 import type { Endpoints } from "../upstream/adapters.js";
+import { transportMode } from "../upstream/transport.js";
 
 export type Runtime = "tauri" | "dev-proxy" | "static";
 
@@ -26,9 +27,19 @@ const PROXIED: Endpoints = {
   output: "/api/output",
 };
 
+/**
+ * 是否运行在 Tauri 桌面端。
+ *
+ * 判定口径必须与 `transport.transportMode()` **完全一致**，都基于
+ * 「invoke 是否真的可调用」，而不是「__TAURI__ 是否存在」。
+ *
+ * 原因：Tauri 2 把 invoke 放在 `__TAURI__.core.invoke`，只检查 `__TAURI__`
+ * 会漏判（历史上正是这个差异导致桌面端误判为浏览器直连，被上游 CORS 拦截）。
+ * 反过来，若 `__TAURI__` 存在却取不到 invoke，判成 tauri 会让端点解析走直连地址，
+ * 而传输层又走 direct —— 两处结论打架。所以统一以 invoke 可达性为唯一真相来源。
+ */
 export function detectRuntime(): Runtime {
-  const hasTauri = typeof (globalThis as { __TAURI__?: unknown }).__TAURI__ !== "undefined";
-  if (hasTauri) return "tauri";
+  if (transportMode() === "proxy") return "tauri";
   const isDev = Boolean((import.meta as { env?: { DEV?: boolean } }).env?.DEV);
   return isDev ? "dev-proxy" : "static";
 }
