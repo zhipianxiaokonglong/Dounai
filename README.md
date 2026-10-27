@@ -42,15 +42,17 @@ Dounai 是模块化产品，各模块独立运行、独立测试，且各自独�
 
 | 工具 | 职责 | 仓库 |
 |---|---|---|
-| **启动器** | **安装依赖、环境体检、模块启停、一键套装、本地离线安装** | **[`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher)** |
+| **启动器** | **环境体检、模块启停、一键启动、本地 zip 安装**（在线安装待软件源） | **[`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher)** |
 
 启动器**不参与上面的事件流**，也不在运行时链路上——它只负责把三个上游与本仓库的
-运行环境装好、配好。手动装也能跑起来，但用启动器可以省掉逐个配端口、装依赖、
-校验下载这一整套手工步骤。
+运行环境装好、配好。
 
-> 首次使用**建议先装启动器**：它会检测 Python / Node / 显卡 / 磁盘，
-> 按最小安装原则只装必需项（大体积模型权重只推荐、不预装），
-> 并在安装失败时自动回滚，不留半残环境。
+> ⚠️ **启动器当前没有软件源**：模块下载源与签名公钥都未部署，出网白名单是空集，
+> 因此**在线安装与一键套装暂不可用**。能用的部分是：环境体检、启停已装模块、
+> 一键启动整套、用本地 zip 安装。详见其 README 的「当前状态」一节。
+>
+> 也就是说，现在还**省不掉**下面的手工装上游步骤——两者并存，等源部署后
+> 启动器才会真正替代手工流程。
 
 本仓库**只通过约定的事件契约**与上游对接，不依赖其内部实现（契约见
 [`docs/contracts.md`](docs/contracts.md)）。
@@ -159,9 +161,13 @@ Dounai 是模块化产品，各模块独立运行、独立测试，且各自独�
 
 ## 🚀 快速开始
 
-> **懒人路线**：装 [`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher)，
-> 在界面里勾选套装即可——它会装依赖、配端口、做环境体检。
-> 下面的手工步骤适合想搞清每一步在做什么的人，或需要自行控制版本的情况。
+> **关于「懒人路线」**：原本打算让 [`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher)
+> 一键装好依赖，但它**当前没有软件源**，在线安装与一键套装都还用不了。
+>
+> 所以现阶段请**按下下面的手工步骤走**。启动器能帮上忙的是：环境体检
+> （查 Python / Node / 显卡 / 磁盘）、以及装好之后的一键启动与停止。
+>
+> 等软件源部署完成，这里会改成真正的懒人路线。
 
 ### 前置
 
@@ -413,7 +419,7 @@ cargo test --release --manifest-path src-tauri/Cargo.toml   # 12 个 Rust 单测
 
 | 仓库 | 说明 |
 |---|---|
-| [`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher) | 启动器：安装、环境体检、模块管理、一键套装、本地离线安装（自有文档见其 `docs/`） |
+| [`Dounai_launcher`](https://github.com/zhipianxiaokonglong/Dounai_launcher) | 启动器：环境体检、模块启停、一键启动、本地 zip 安装；**在线安装待软件源部署**（自有文档见其 `docs/`） |
 
 ---
 
