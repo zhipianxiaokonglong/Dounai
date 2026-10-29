@@ -20,6 +20,22 @@
   --shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
 }
 
+/* `hidden` 属性必须真的生效。
+ *
+ * 浏览器的默认样式是 `[hidden] { display: none }`，但那是**用户代理样式**，
+ * 优先级低于任何作者样式。`.panel { display: flex }`、`.pet__badge { display: inline-flex }`
+ * 这类声明会把它盖掉——结果是 JS 里 `el.hidden = true` 改了属性，界面却毫无变化。
+ *
+ * 真实症状：点悬浮窗的「×」收起面板没有任何反应（面板始终可见），
+ * 启动本该是收起状态的面板也一直摊开着。
+ *
+ * 用 `!important` 是为了压过任意 class 的 display 声明；这是社区通行做法。
+ * 新增组件时不必再为 `hidden` 单独写规则。
+ */
+[hidden] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
