@@ -23,7 +23,37 @@
 /* `hidden` 属性必须真的生效。
  *
  * 浏览器的默认样式是 `[hidden] { display: none }`，但那是**用户代理样式**，
- * 优先级低于任何作者样式。`.panel { display: flex }`、`.pet__badge { display: inline-flex }`
+ * 优先级低于任何作者样式。`/* 三层连接状态条：紧凑一行，异常时追加一行指路文案 */
+.panel__layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.panel__layer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.panel__layer-chip[data-ok="false"] {
+  background: rgba(229, 72, 77, 0.12);
+  color: var(--danger);
+}
+
+.panel__layers-hint {
+  flex-basis: 100%;
+  color: var(--text-dim);
+}
+
+.panel { display: flex }`、`.pet__badge { display: inline-flex }`
  * 这类声明会把它盖掉——结果是 JS 里 `el.hidden = true` 改了属性，界面却毫无变化。
  *
  * 真实症状：点悬浮窗的「×」收起面板没有任何反应（面板始终可见），

@@ -39,6 +39,7 @@ const el = {
   close: must<HTMLButtonElement>("btn-close"),
   voice: must<HTMLAudioElement>("voice"),
   modelHint: must<HTMLElement>("model-hint"),
+  layerStatus: must<HTMLElement>("layer-status"),
   // 结构图要求的三路输入入口 + 提示词切换入口
   btnImage: must<HTMLButtonElement>("btn-image"),
   btnVoice: must<HTMLButtonElement>("btn-voice"),
@@ -98,6 +99,7 @@ function render(snapshot: TurnSnapshot, text: string): void {
   el.app.dataset.state = snapshot.state;
   renderBadge(snapshot);
   renderWelcomeHint(snapshot.health);
+  renderLayerStatus(snapshot);
   renderStream(snapshot, text);
   renderNotice(snapshot);
   renderControls(snapshot);
@@ -202,6 +204,44 @@ function renderStream(snapshot: TurnSnapshot, text: string): void {
   if (snapshot.contentType === "code") currentBubble.classList.add("bubble--code");
 
   el.stream.scrollTop = el.stream.scrollHeight;
+}
+
+/**
+ * 渲染三层连接状态。
+ *
+ * 只显示"哪层通、哪层不通"以及去哪里配置——**不展示也不收集任何密钥**。
+ * 密钥由启动器的「厂商」页写入，启动模块时以环境变量注入上游，
+ * 悬浮窗这一侧根本拿不到密钥（见 launcher 的 vendor_keys 设计）。
+ */
+function renderLayerStatus(snapshot: TurnSnapshot): void {
+  const layers: Array<[string, boolean]> = [
+    ["输入", snapshot.health.input],
+    ["模型", snapshot.health.llm],
+    ["语音", snapshot.health.output],
+  ];
+  el.layerStatus.hidden = false;
+  el.layerStatus.replaceChildren();
+
+  for (const [name, ok] of layers) {
+    const chip = document.createElement("span");
+    chip.className = "panel__layer-chip";
+    chip.dataset.ok = String(ok);
+    chip.textContent = `${name} ${ok ? "✓" : "✗"}`;
+    chip.title = ok
+      ? `${name}层已连接`
+      : `${name}层未连接：可能未启动，或该层厂商未配置密钥`;
+    el.layerStatus.appendChild(chip);
+  }
+
+  const down = layers.filter(([, ok]) => !ok).map(([n]) => n);
+  if (down.length > 0) {
+    const hint = document.createElement("span");
+    hint.className = "panel__layers-hint";
+    hint.textContent =
+      `${down.join("、")}不可用。请到启动器的「厂商」页配置厂商密钥并重启对应模块` +
+      "（本窗口不保存密钥）。";
+    el.layerStatus.appendChild(hint);
+  }
 }
 
 function renderNotice(snapshot: TurnSnapshot): void {
@@ -361,6 +401,10 @@ function syncAudio(snapshot: TurnSnapshot): void {
 function openPanel(): void {
   el.panel.hidden = false;
   el.input.focus();
+  // 展开时刷新一次三层连接状态：
+  // 状态条是上一次 probe 的结果，长时间收起后会过期（上游可能已被停掉）。
+  // probe() 内部会 patch 快照并触发重渲染，无需在此手动 render。
+  void orchestrator.probe();
 }
 
 function closePanel(): void {
