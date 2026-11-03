@@ -10,6 +10,7 @@
 
 import {
   type InputDegradedInfo,
+  type LLMPart,
   type InputEvent,
   type LLMEvent,
   type MetaFrame,
@@ -259,7 +260,13 @@ export interface TurnCallbacks {
 
 export interface TurnRequest {
   eventId: string;
-  text: string;
+  /**
+   * 内容分区（D-02）。
+   *
+   * 不再用单个 `text`：图像必须走独立分区并以 data URI 内联，
+   * 否则模型层只会收到一段它无法理解的回环 URL 字符串。
+   */
+  parts: LLMPart[];
   sessionId?: string;
   model?: string;
   /**
@@ -338,10 +345,13 @@ export class LLMAdapter {
   ): Promise<LLMEvent> {
     const body = JSON.stringify({
       event_id: turn.eventId,
-      parts: [{ modality: "text", content: turn.text }],
+      // D-01：session_id 是模型层 InboundEvent 的**顶层字段**。
+      // 放进 metadata 会被当成普通装饰键忽略，模型层随即静默新建会话——
+      // 表现为助手"失忆"，且完全没有报错。
+      ...(turn.sessionId ? { session_id: turn.sessionId } : {}),
+      parts: turn.parts,
       metadata: {
         ...(turn.model ? { model: turn.model } : {}),
-        ...(turn.sessionId ? { session_id: turn.sessionId } : {}),
         // 每轮覆盖提示词配置；不传则沿用模型层默认
         ...(turn.promptProfile ? { prompt_profile: turn.promptProfile } : {}),
       },
@@ -592,19 +602,88 @@ export function userFacingError(error: unknown): string {
   }
   if (error instanceof UpstreamRejectedError) {
     switch (error.upstream.code) {
+      /* --- 模型 / 厂商（首跑最常见）--- */
       case "NO_PROVIDER_AVAILABLE":
       case "ALL_PROVIDERS_FAILED":
-        return "还没有可用的模型，请先在模型层配置一个厂商密钥。";
+      case "PROVIDER_UNAVAILABLE":
+      case "MODEL_UNAVAILABLE":
+      case "UNKNOWN_MODEL":
+      case "DEFAULT_PROVIDER_REQUIRED":
+        return "还没有可用的模型，请先在模型层配置一个厂商密钥（启动器「厂商」页可一键配置）。";
       case "PROVIDER_AUTH":
-        return "模型厂商鉴权失败，请检查密钥。";
+      case "PROVIDER_TEST_AUTH_FAILED":
+        return "模型厂商鉴权失败，请检查密钥是否正确、是否过期。";
       case "PROVIDER_RATE_LIMITED":
         return "模型厂商限流了，稍后再试。";
-      case "GENERATION_INTERRUPTED":
-        return "回答生成到一半中断了，已保留前面的内容。";
+      case "PROVIDER_TIMEOUT":
+      case "PROVIDER_TEST_TIMEOUT":
+        return "模型厂商响应超时，稍后再试。";
+      case "PROVIDER_TEST_UNREACHABLE":
+        return "连不上模型厂商，请检查网络或代理设置。";
+      case "PROVIDER_TEST_MODEL_NOT_FOUND":
+      case "CUSTOM_MODEL_NOT_FOUND":
+        return "厂商不认这个模型名，换一个模型或检查配置。";
+      case "PROVIDER_TEST_UNVERIFIED":
+        return "这家厂商尚未验证通过，请先在模型层完成一次连接测试。";
+      case "PROVIDER_IN_USE":
+        return "这个厂商正在被当前会话使用，先切换会话再改。";
+      case "SECRET_STORE_ERROR":
+        return "模型层的密钥存储出错（可能是密钥格式不对），请检查密钥配置。";
+      case "CONFIG_IMPORT_INVALID":
+        return "模型层配置导入失败，请检查导入文件格式。";
+
+      /* --- 会话 / 提示词 --- */
+      case "SESSION_NOT_FOUND":
+        return "这个会话在模型层已不存在，请点「新对话」重新开始。";
+      case "PROMPT_NOT_FOUND":
+      case "PROMPT_VERSION_NOT_FOUND":
+        return "提示词配置不存在，已改用默认人格。";
+      case "PROMPT_BUILTIN_PROTECTED":
+        return "内置提示词不能删除或改名。";
+      case "PROMPT_INVALID":
+        return "提示词内容不合规，请修改后再试。";
+      case "MESSAGE_NOT_FOUND":
+        return "找不到对应消息，可能已被清理。";
+
+      /* --- 输入 / 容量 --- */
       case "INVALID_INPUT":
         return "这条输入格式不对，换一种说法试试。";
+      case "UNSUPPORTED_MODALITY":
+        return "当前模型不接受这种输入类型（例如纯文本模型收到图片）。";
+      case "PAYLOAD_TOO_LARGE":
+        return "内容太大了，请压缩或分段发送。";
+      case "EVENT_DUPLICATE":
+        return "这条消息重复了，已按上一次的结果处理。";
+
+      /* --- 记忆 / 检索（降级项，不阻断对话）--- */
+      case "MEMORY_UNAVAILABLE":
+      case "MEMORY_TIMEOUT":
+      case "MEMORY_BAD_RESPONSE":
+        return "记忆模块暂时不可用，本轮不带记忆回答。";
+      case "SEARCH_UNAVAILABLE":
+      case "SEARCH_NOT_CONFIGURED":
+        return "联网检索不可用，本轮只凭模型知识回答。";
+
+      /* --- 中断 --- */
+      case "GENERATION_INTERRUPTED":
+        return "回答生成到一半中断了，已保留前面的内容。";
+
+      /* --- 语音层（MoodVoice 错误码）--- */
+      case "no_ready_provider":
+        return "没有可用的语音厂商，本条先只显示文字。";
+      case "missing_credentials":
+        return "语音厂商缺少密钥，本条先只显示文字。";
+      case "content_too_long":
+        return "要朗读的文本太长，本条先只显示文字。";
+      case "stream_interrupted":
+      case "empty_audio":
+      case "invalid_response":
+        return "语音合成异常，本条先只显示文字。";
+
+      /* --- 代理 / 开发模式 --- */
       case "origin_not_allowed":
         return "上游拒绝了跨域请求，请通过桌面应用运行（详见排障文档）。";
+
       default:
         return "上游服务返回了错误，稍后重试。";
     }

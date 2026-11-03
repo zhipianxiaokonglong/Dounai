@@ -18,6 +18,7 @@ import {
 import { createAvatar, registerAvatar, DEFAULT_AVATAR_ID, type AvatarState } from "../avatar/types.js";
 import { LogoAvatarRenderer } from "../avatar/renderers/logo.js";
 import { loadSettings, saveSettings } from "./settings.js";
+import { resolvePromptProfileId } from "../contracts/index.js";
 import { mountTrayBridge } from "./bridge.js";
 import { detectRuntime, resolveEndpoints } from "./runtime.js";
 
@@ -37,6 +38,7 @@ const el = {
   input: must<HTMLInputElement>("input"),
   send: must<HTMLButtonElement>("btn-send"),
   close: must<HTMLButtonElement>("btn-close"),
+  btnNewSession: must<HTMLButtonElement>("btn-new-session"),
   voice: must<HTMLAudioElement>("voice"),
   modelHint: must<HTMLElement>("model-hint"),
   layerStatus: must<HTMLElement>("layer-status"),
@@ -70,6 +72,61 @@ let currentBubble: HTMLElement | null = null;
 let busy = false;
 /** 当前选中的提示词配置 ID（空字符串 = 用模型层默认） */
 let currentPromptProfile = settings.promptProfile ?? "";
+
+/**
+ * 当前模型层**实际存在**的提示词配置 ID 集合（D-03）。
+ *
+ * 为什么需要它：本地存的是上一次运行时的 profile id，模型层的配置可能已经变过
+ * （换版本、删了 profile、连了另一台模型层）。提交时若带上一个不存在的 id，
+ * 上游会整轮 404，用户表现为"突然发不出消息"。
+ */
+let knownPromptProfiles: Set<string> | null = null;
+
+/**
+ * 会话 ID（D-01）。
+ *
+ * 为什么必须由组装层自己持有：输入层收了 `session_id` 但不回传，
+ * 模型层收不到就静默新建会话——整条链路没有任何一处能保证"同一会话"。
+ * 所以本地持久化一份，每次提交都带上。
+ *
+ * 必须是 UUID：**模型层**的 `InboundEvent.session_id` 是 `uuid.UUID` 类型，
+ * 传非 UUID 会直接判 422（整轮失败）。
+ * 输入层（`str | None`）与语音层（`str`，默认空串、最长 128）都不限格式，
+ * 但为了让一个 ID 三层通用，这里统一生成 UUID。
+ */
+const SESSION_KEY = "dounai.session_id";
+
+function newSessionId(): string {
+  // crypto.randomUUID 在 WebView2 里可用；退化路径手搓 v4 形如 UUID
+  const maybe = (globalThis.crypto as Crypto | undefined)?.randomUUID;
+  if (typeof maybe === "function") return maybe.call(globalThis.crypto);
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function loadSessionId(): string {
+  try {
+    const stored = localStorage.getItem(SESSION_KEY);
+    if (stored && UUID_RE.test(stored)) return stored;
+  } catch {
+    // localStorage 不可用时退化为内存会话，不阻断对话
+  }
+  const fresh = newSessionId();
+  try {
+    localStorage.setItem(SESSION_KEY, fresh);
+  } catch {
+    // 同上
+  }
+  return fresh;
+}
+
+let sessionId = loadSessionId();
 
 const orchestrator = new Orchestrator(adapters, {
   onSnapshot: (snapshot) => {
@@ -407,11 +464,30 @@ function openPanel(): void {
   void orchestrator.probe();
 }
 
+/**
+ * 收起面板（D-04）。
+ *
+ * 只收起窗口，**不清对话**：用户"收起来再展开"应该还能看见刚才的对话。
+ * 清空语义由「新对话」按钮承担——那才是一次明确的上下文重置。
+ */
 function closePanel(): void {
   el.panel.hidden = true;
   currentBubble = null;
+}
+
+/** 新对话：重置上下文并换一个会话 ID（D-04 + D-01）。 */
+function startNewSession(): void {
+  currentBubble = null;
   el.stream.replaceChildren(el.emptyHint);
   orchestrator.reset();
+  // 换新会话 ID：否则模型层仍会把新对话接到旧上下文里
+  sessionId = newSessionId();
+  try {
+    localStorage.setItem(SESSION_KEY, sessionId);
+  } catch {
+    // 存不进就只用内存值
+  }
+  renderControls(lastSnapshot ?? idleSnapshot());
 }
 
 /**
@@ -447,6 +523,10 @@ el.avatarHost.addEventListener("pointerup", (event) => {
 });
 
 el.close.addEventListener("click", closePanel);
+el.btnNewSession.addEventListener("click", () => {
+  if (!confirm("开始新对话？\n\n当前对话会从界面上清空，助手也会忘记之前的上下文。")) return;
+  startNewSession();
+});
 
 /* 图像入口：点击 → 选文件 → 交给输入层 */
 el.btnImage.addEventListener("click", () => el.filePicker.click());
@@ -468,6 +548,8 @@ el.promptSelect.addEventListener("change", () => {
 /** 拉取提示词配置列表；失败时静默保留「默认」一项，不影响对话。 */
 async function loadPromptProfiles(): Promise<void> {
   const profiles = await adapters.llm.listPromptProfiles();
+  // D-03：记下"真实存在"的集合，供提交前校验
+  knownPromptProfiles = new Set(profiles.map((profile) => profile.id));
   if (profiles.length === 0) {
     el.promptSelect.disabled = true;
     el.promptSelect.title = "模型层未提供提示词配置";
@@ -489,6 +571,30 @@ async function loadPromptProfiles(): Promise<void> {
   }
 }
 
+/**
+ * 解析本轮真正要用的提示词配置（D-03）。
+ *
+ * 三条规则：
+ * 1. 没选（空串）→ 不传，用模型层默认；
+ * 2. 选的值不在已知集合里 → **不传**并清空本地记录，同时提示用户；
+ * 3. 还没拿到集合（首屏早于 profile 加载）→ 保守传入，由上游判定。
+ *
+ * 宁可这轮用默认人格，也不要让整轮 404 失败。
+ */
+function resolvePromptProfile(): string | undefined {
+  const decision = resolvePromptProfileId(currentPromptProfile, knownPromptProfiles);
+  if (decision.stale) {
+    currentPromptProfile = "";
+    saveSettings({ ...settings, promptProfile: "" });
+    el.promptSelect.value = "";
+    el.notice.hidden = false;
+    el.notice.textContent = `提示词配置「${decision.stale}」已不存在，本轮改用默认人格。`;
+    el.notice.dataset.tone = "warn";
+    return undefined;
+  }
+  return decision.profile;
+}
+
 el.composer.addEventListener("submit", (event) => {
   event.preventDefault();
   void send(el.input.value);
@@ -507,7 +613,7 @@ async function send(raw: string): Promise<void> {
   try {
     const snapshot = await orchestrator.submit(
       { kind: "text", text },
-      { promptProfile: currentPromptProfile || undefined },
+      { sessionId, promptProfile: resolvePromptProfile() },
     );
     syncAudio(snapshot);
     if (!snapshot.audioUrl) orchestrator.notifyTextSettled();
@@ -537,7 +643,7 @@ async function sendImage(file: File): Promise<void> {
         filename: file.name || undefined,
         mime: file.type || undefined,
       },
-      { promptProfile: currentPromptProfile || undefined },
+      { sessionId, promptProfile: resolvePromptProfile() },
     );
     syncAudio(snapshot);
     if (!snapshot.audioUrl) orchestrator.notifyTextSettled();
@@ -602,7 +708,7 @@ async function sendAudio(blob: Blob): Promise<void> {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const snapshot = await orchestrator.submit(
       { kind: "audio", bytes, filename: "voice.webm", mime: "audio/webm", language: "zh" },
-      { promptProfile: currentPromptProfile || undefined },
+      { sessionId, promptProfile: resolvePromptProfile() },
     );
     syncAudio(snapshot);
     if (!snapshot.audioUrl) orchestrator.notifyTextSettled();

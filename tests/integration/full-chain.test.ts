@@ -73,7 +73,7 @@ describe("OmniNexus SSE 契约", () => {
     const deltas: LLMEvent[] = [];
 
     const final = await llm.runTurn(
-      { eventId: crypto.randomUUID(), text: "用一句话打个招呼", model: "echo:echo" },
+      { eventId: crypto.randomUUID(), parts: [{ modality: "text", content: "用一句话打个招呼" }], model: "echo:echo" },
       {
         onMeta: () => order.push("meta"),
         onRoute: () => order.push("route"),
@@ -105,8 +105,8 @@ describe("OmniNexus SSE 契约", () => {
   it("同一 event_id 重投返回同一输出事件（幂等）", async () => {
     if (!available.llm) return;
     const eventId = crypto.randomUUID();
-    const first = await llm.runTurn({ eventId, text: "幂等测试", model: "echo:echo" }, {});
-    const second = await llm.runTurn({ eventId, text: "幂等测试", model: "echo:echo" }, {});
+    const first = await llm.runTurn({ eventId, parts: [{ modality: "text", content: "幂等测试" }], model: "echo:echo" }, {});
+    const second = await llm.runTurn({ eventId, parts: [{ modality: "text", content: "幂等测试" }], model: "echo:echo" }, {});
     expect(second.event_id).toBe(first.event_id);
   }, 90_000);
 });

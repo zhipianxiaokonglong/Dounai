@@ -24,7 +24,12 @@ function makeInputEvent(overrides: Partial<InputEvent> = {}): InputEvent {
     timestamp: "2026-10-24T00:00:00Z",
     modality: "text",
     content: "今天有点累",
-    metadata: { asr_text: "", voiceprint_event: "none", model_capabilities: ["text"] },
+    metadata: {
+      asr_text: "",
+      voiceprint_event: "none",
+      model_capabilities: ["text"],
+      asr_status: "not_applicable",
+    },
     ...overrides,
   };
 }
@@ -153,6 +158,7 @@ describe("Orchestrator 正常链路", () => {
               asr_text: "语音里说的内容",
               voiceprint_event: "none",
               model_capabilities: ["text"],
+              asr_status: "completed",
             },
           }),
           degraded: { degraded: false, provider: "offline", model: null, voiceprintChecked: true, requestId: null },
@@ -169,11 +175,17 @@ describe("Orchestrator 正常链路", () => {
     });
 
     expect(input.submitAudio).toHaveBeenCalledTimes(1);
-    // 关键：送给模型的是转写文本，而不是媒体 URL
-    expect(llm.runTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "语音里说的内容" }),
-      expect.anything(),
-    );
+    // 关键：送给模型的是**转写文本分区**，而不是媒体 URL（D-02）
+    const call = vi.mocked(llm.runTurn).mock.calls[0];
+    expect(call).toBeDefined();
+    const sent = call![0];
+    expect(sent.parts).toEqual([
+      { modality: "text", content: "语音里说的内容" },
+    ]);
+    // 反向断言：任何分区里都不能出现输入层给的媒体 URL
+    for (const part of sent.parts) {
+      expect(part.content).not.toMatch(/^http:\/\/127\.0\.0\.1:8101\/v1\/media/);
+    }
     expect(snapshot.modality).toBe("audio");
   });
 
@@ -184,7 +196,12 @@ describe("Orchestrator 正常链路", () => {
           event: makeInputEvent({
             modality: "audio",
             content: "http://127.0.0.1:8101/v1/media/v",
-            metadata: { asr_text: "豆奶", voiceprint_event: "wakeup", model_capabilities: [] },
+            metadata: {
+              asr_text: "豆奶",
+              voiceprint_event: "wakeup",
+              model_capabilities: [],
+              asr_status: "completed",
+            },
           }),
           degraded: { degraded: false, provider: "offline", model: null, voiceprintChecked: true, requestId: null },
         }),

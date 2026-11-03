@@ -125,7 +125,7 @@ describe("真实模型层：提示词接口", () => {
     const final = await llm.runTurn(
       {
         eventId: crypto.randomUUID(),
-        text: "你好",
+        parts: [{ modality: "text", content: "你好" }],
         model: "echo:echo",
         promptProfile: "default",
       },

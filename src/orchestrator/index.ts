@@ -7,7 +7,7 @@
  *  3. output 失败不得影响文本显示。
  */
 
-import type { LLMEvent, OutputEvent } from "../contracts/index.js";
+import type { LLMEvent, LLMPart, OutputEvent } from "../contracts/index.js";
 import {
   type InputAdapter,
   type LLMAdapter,
@@ -62,6 +62,124 @@ export interface OrchestratorEvents {
   onSnapshot(snapshot: TurnSnapshot): void;
   /** 音频起播/结束，由 UI 层回调，用于驱动 talking 态的真实生命周期 */
   onAudioEnded?(): void;
+}
+
+/**
+ * 从输入事件 + 用户原始载荷构造模型层的内容分区（D-02）。
+ *
+ * 为什么这里需要两手信息：
+ * - 图像：事件体只给了回环 URL，**字节必须来自我们自己的 `input.bytes`**；
+ * - 语音：事件体给了 `asr_text` 与 `asr_status`，但音频字节在模型层是没用的
+ *   （模型层不做 ASR），所以语音只能转成文本；转写不可用时必须报错而不是
+ *   把 `content`（回环 URL）当文本发出去。
+ */
+type BuildPartsResult =
+  | { ok: true; parts: LLMPart[] }
+  | { ok: false; notice: string };
+
+function buildParts(
+  input: SubmitPayload,
+  event: { content: string; metadata: { asr_text: string; asr_status: string } },
+): BuildPartsResult {
+  if (input.kind === "text") {
+    return { ok: true, parts: [{ modality: "text", content: input.text }] };
+  }
+
+  if (input.kind === "image") {
+    const mime = input.mime ?? guessImageMime(input.filename);
+    if (!mime.startsWith("image/")) {
+      return { ok: false, notice: "图片类型无法识别，换一张 PNG / JPEG / WebP 再试。" };
+    }
+
+    // 体积保护：先估算，超限就不发送。
+    // 不做自动降采样——重编码会损害小字识别，而"读出图片文字"正是本项要支持的场景。
+    // 与其悄悄把图压糊，不如明确告诉用户"太大、请处理"，让用户自己决定怎么裁。
+    const chars = estimateDataUrlChars(input.bytes.byteLength, mime);
+    if (chars > MAX_IMAGE_PART_CHARS) {
+      // 反推"还能发多大的原图"（用同一膨胀比），给出可执行建议
+      const maxBinaryBytes = Math.floor((MAX_IMAGE_PART_CHARS - 64) / 4 * 3);
+      return {
+        ok: false,
+        notice:
+          `图片太大（约 ${mbOf(input.bytes.byteLength)} MB，单张上限约 ` +
+          `${mbOf(maxBinaryBytes)} MB）。请裁剪或压缩后重试——` +
+          "我没有自动压缩，因为压缩会降低图内文字的识别效果。",
+      };
+    }
+
+    const dataUrl = toDataUrl(input.bytes, mime);
+    return {
+      ok: true,
+      parts: [
+        {
+          modality: "image",
+          content: dataUrl,
+          metadata: {
+            mime_type: mime,
+            ...(input.filename ? { filename: input.filename } : {}),
+          },
+        },
+      ],
+    };
+  }
+
+  // 语音：只有上游明确说"转写完成"才可用。
+  //
+  // 按 asr_status 区分提示（对齐上游 4 值枚举，见 contracts 里的注释）：
+  // empty 是"没说话"，让用户再说一次；unavailable 才是"能力缺失"，该去配置。
+  // 混为一谈会让用户对着一个空录音去查厂商密钥。
+  const transcript = event.metadata.asr_text.trim();
+  if (event.metadata.asr_status !== "completed" || !transcript) {
+    const notice =
+      event.metadata.asr_status === "empty"
+        ? "没有听到语音内容，请再说一次，或改用文字输入。"
+        : "语音转写不可用（输入层没有可用的转写能力）。可以改用文字输入，" +
+          "或在启动器「厂商」页为输入层配置带转写能力的厂商。";
+    return { ok: false, notice };
+  }
+  return { ok: true, parts: [{ modality: "text", content: transcript }] };
+}
+
+/**
+ * 单个图像分区允许的**字符**上限，取自模型层 `MAX_PART_CHARS`。
+ *
+ * 留出余量：一条事件可能还有别的分区与 metadata，全用满会顶到 12,000,000。
+ */
+const MAX_IMAGE_PART_CHARS = 10_000_000;
+
+/**
+ * base64 编码后的字符数（含 data URI 前缀）。
+ *
+ * 不用真正编码就能算：base64 长度 = ceil(n/3)*4，加前缀长度。
+ * 先算再决定是否编码，避免为一张必然被拒的大图白白做几十 MB 的字符串拼接。
+ */
+function estimateDataUrlChars(byteLength: number, mime: string): number {
+  const base64Len = Math.ceil(byteLength / 3) * 4;
+  // "data:" + mime + ";base64," + payload
+  return "data:;base64,".length + mime.length + base64Len;
+}
+
+/** 字节数转成人类可读的 MB，用于提示文案。 */
+function mbOf(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+/** 把字节编码成 data URI（模型层按 `data:` 前缀走 base64 分支）。 */
+function toDataUrl(bytes: Uint8Array, mime: string): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
+function guessImageMime(filename?: string): string {
+  const ext = (filename ?? "").toLowerCase().split(".").pop() ?? "";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  return "image/png";
 }
 
 const IDLE_SNAPSHOT: TurnSnapshot = {
@@ -187,15 +305,31 @@ export class Orchestrator {
       return this.getSnapshot();
     }
 
-    // 2) OmniNexus：流式产出；delta 只用于即时上屏
+    // 2) 构造发往模型层的内容分区（D-02）
+    //
+    // 关键：输入层事件里的 `content` 是**本机回环 URL**，模型层取不到，
+    // 也不能当描述文本用。图像必须用我们手上真实的字节生成 data URI，
+    // 模型层的 provider 层会走 base64 内联分支。
+    const built = buildParts(input, inputEvent);
+    if (!built.ok) {
+      // 例如语音未转写成功：明确告知，而不是把音频 URL 当文本发出去
+      this.patch({
+        state: "degraded",
+        notice: built.notice,
+        degraded: true,
+        modality: input.kind,
+      });
+      return this.getSnapshot();
+    }
+
+    // 局部常量：图像输入时就排队记忆；是否可用随计划返回
     let streamed = "";
     let finalEvent: LLMEvent;
     try {
       finalEvent = await this.adapters.llm.runTurn(
         {
           eventId: inputEvent.event_id,
-          // 语音输入优先用转写文本；图像输入用事件 content（受控媒体 URL）
-          text: inputEvent.metadata.asr_text || inputEvent.content,
+          parts: built.parts,
           sessionId: options.sessionId,
           model: options.model,
           promptProfile: options.promptProfile,

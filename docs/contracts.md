@@ -107,7 +107,7 @@ meta → route → delta* → warning → final          （已输出部分后�
   "session_id": "…",
   "content": "完整文本",
   "stream": false,
-  "tags": {"emotion": "comfort", "type": "text", "intent": "reply"}
+  "tags": {"emotion": "sadness", "type": "text", "intent": "reply"}
 }
 ```
 
@@ -115,7 +115,7 @@ meta → route → delta* → warning → final          （已输出部分后�
 |---|---|---|
 | `event_id` | 同一回合所有帧一致 | 归并键 |
 | `content` | delta 为增量；final 为完整文本 | **UI 只以 final 为准做最终渲染**，delta 用于即时上屏 |
-| `tags.emotion` | joy/sadness/anger/fear/surprise/confusion/frustration/gratitude/neutral | 情感态预留 + 传给 `output` |
+| `tags.emotion` | joy/sadness/anger/fear/surprise/confusion/frustration/gratitude/neutral（**仅这 9 类**，无 comfort/calm/apology） | 情感态预留 + 传给 `output`；`output` 用自己的 aliases 映射到它的 12 类 |
 | `tags.type` | text/code/list/table/json/mixed | 渲染方式（代码块不朗读） |
 | `tags.intent` | reply/tool/linkage | `output` 据此决定是否合成语音 |
 
@@ -165,7 +165,7 @@ meta → route → delta* → warning → final          （已输出部分后�
   "session_id": "uuid",
   "content": "完整文本",
   "stream": false,
-  "tags": {"emotion": "comfort", "type": "text", "intent": "reply"}
+  "tags": {"emotion": "sadness", "type": "text", "intent": "reply"}
 }
 ```
 

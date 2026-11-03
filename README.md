@@ -298,8 +298,13 @@ data: {"event_id":"…","session_id":"…","content":"增量","stream":true,
 
 event: final
 data: {"event_id":"…","session_id":"…","content":"完整文本","stream":false,
-       "tags":{"emotion":"comfort","type":"text","intent":"reply"}}
+       "tags":{"emotion":"sadness","type":"text","intent":"reply"}}
 ```
+
+> `tags.emotion` 的**模型层产出只有 9 类**：
+> `joy / sadness / anger / fear / surprise / confusion / frustration / gratitude / neutral`。
+> 语音层接受更多标签（含 `comfort / calm / apology` 等 12 类），由语音层的 aliases 做映射。
+> 不要把语音层的标签当成模型层会返回的值。
 
 语音层的输出事件：
 

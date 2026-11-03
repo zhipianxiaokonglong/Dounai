@@ -104,7 +104,7 @@ describe("LLMAdapter SSE 解析", () => {
     ]);
 
     const final = await adapter.runTurn(
-      { eventId: "e1", text: "hi" },
+      { eventId: "e1", parts: [{ modality: "text", content: "hi" }] },
       {
         onMeta: (m) => metas.push(m),
         onRoute: (r) => routes.push(r),
@@ -126,7 +126,7 @@ describe("LLMAdapter SSE 解析", () => {
       frame("delta", deltaPayload("x")),
       frame("final", finalPayload("x")),
     ]);
-    const final = await adapter.runTurn({ eventId: "e1", text: "hi" }, {});
+    const final = await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {});
     expect(final.content).toBe("x");
   });
 
@@ -134,14 +134,14 @@ describe("LLMAdapter SSE 解析", () => {
     const full = frame("delta", deltaPayload("分片")) + frame("final", finalPayload("分片"));
     const half = Math.floor(full.length / 2);
     const adapter = adapterFor([full.slice(0, half), full.slice(half)]);
-    const final = await adapter.runTurn({ eventId: "e1", text: "hi" }, {});
+    const final = await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {});
     expect(final.content).toBe("分片");
   });
 
   it("支持 CRLF 分帧", async () => {
     const crlf = `event: final\r\ndata: ${JSON.stringify(finalPayload("crlf"))}\r\n\r\n`;
     const adapter = adapterFor([crlf]);
-    const final = await adapter.runTurn({ eventId: "e1", text: "hi" }, {});
+    const final = await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {});
     expect(final.content).toBe("crlf");
   });
 
@@ -151,7 +151,7 @@ describe("LLMAdapter SSE 解析", () => {
       frame("delta", deltaPayload("ok")),
       frame("final", finalPayload("ok")),
     ]);
-    const final = await adapter.runTurn({ eventId: "e1", text: "hi" }, {});
+    const final = await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {});
     expect(final.content).toBe("ok");
   });
 
@@ -160,7 +160,7 @@ describe("LLMAdapter SSE 解析", () => {
       'event: delta\ndata: {"content":"没有 event_id"}\n\n',
       frame("final", finalPayload("正常")),
     ]);
-    const final = await adapter.runTurn({ eventId: "e1", text: "hi" }, {});
+    const final = await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {});
     expect(final.content).toBe("正常");
   });
 
@@ -171,14 +171,14 @@ describe("LLMAdapter SSE 解析", () => {
         error: { code: "ALL_PROVIDERS_FAILED", message: "x", retryable: false, request_id: "r" },
       }),
     ]);
-    await expect(adapter.runTurn({ eventId: "e1", text: "hi" }, {})).rejects.toBeInstanceOf(
+    await expect(adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {})).rejects.toBeInstanceOf(
       UpstreamRejectedError,
     );
   });
 
   it("没有 final 时抛 UpstreamUnavailableError", async () => {
     const adapter = adapterFor([frame("delta", deltaPayload("半截"))]);
-    await expect(adapter.runTurn({ eventId: "e1", text: "hi" }, {})).rejects.toBeInstanceOf(
+    await expect(adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {})).rejects.toBeInstanceOf(
       UpstreamUnavailableError,
     );
   });
@@ -189,7 +189,7 @@ describe("LLMAdapter SSE 解析", () => {
       frame("warning", { code: "GENERATION_INTERRUPTED", message: "interrupted" }),
       frame("final", finalPayload("说到一半")),
     ]);
-    const final = await adapter.runTurn({ eventId: "e1", text: "hi" }, {});
+    const final = await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {});
     expect(final.content).toBe("说到一半");
   });
 
@@ -198,7 +198,7 @@ describe("LLMAdapter SSE 解析", () => {
       frame("delta", deltaPayload("x")),
       frame("warning", { code: "GENERATION_INTERRUPTED" }),
     ]);
-    await expect(adapter.runTurn({ eventId: "e1", text: "hi" }, {})).rejects.toThrow(/中断/);
+    await expect(adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {})).rejects.toThrow(/中断/);
   });
 
   it("未知事件名被忽略", async () => {
@@ -206,7 +206,7 @@ describe("LLMAdapter SSE 解析", () => {
       frame("future_event", { whatever: 1 }),
       frame("final", finalPayload("ok")),
     ]);
-    const final = await adapter.runTurn({ eventId: "e1", text: "hi" }, {});
+    const final = await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {});
     expect(final.content).toBe("ok");
   });
 
@@ -216,13 +216,13 @@ describe("LLMAdapter SSE 解析", () => {
       frame("citations", { citations: [{ url: "https://example.com" }] }),
       frame("final", finalPayload("ok")),
     ]);
-    await adapter.runTurn({ eventId: "e1", text: "hi" }, { onCitations });
+    await adapter.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, { onCitations });
     expect(onCitations).toHaveBeenCalledTimes(1);
   });
 
   it("服务不可达时抛 UpstreamUnavailableError", async () => {
     const dead = new LLMAdapter("http://127.0.0.1:1");
-    await expect(dead.runTurn({ eventId: "e1", text: "hi" }, {})).rejects.toBeInstanceOf(
+    await expect(dead.runTurn({ eventId: "e1", parts: [{ modality: "text", content: "hi" }] }, {})).rejects.toBeInstanceOf(
       UpstreamUnavailableError,
     );
   });

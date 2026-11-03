@@ -37,10 +37,25 @@ const num = (value: unknown, fallback = 0): number =>
 
 export type Modality = "text" | "image" | "audio";
 
+/**
+ * ASR 状态（输入层 contract v1.1 起的机读字段）。
+ *
+ * 上游明确规定：**只有 `completed` 才可以把 `asr_text` 当可用文本**。
+ * 这比"asr_text 是否为空"更可靠——空文本有时是合法的无语音输入。
+ *
+ * 语义区分（很重要，直接决定给用户什么提示）：
+ * - `empty`：听清了但没有语音内容（按了录音没说话 / 纯静音）→ 让用户"再说一次"；
+ * - `unavailable`：转写能力不可用（未配置 ASR 厂商 / 模型缺失）→ 才该提示去配置；
+ * - `not_applicable`：本次输入根本不是语音；
+ * - `completed`：转写成功，`asr_text` 可用。
+ */
+export type AsrStatus = "completed" | "empty" | "unavailable" | "not_applicable";
+
 export interface InputMetadata {
   asr_text: string;
   voiceprint_event: "wakeup" | "none";
   model_capabilities: Modality[];
+  asr_status: AsrStatus;
 }
 
 export interface InputEvent {
@@ -62,6 +77,13 @@ export interface InputDegradedInfo {
 
 const MODALITIES: Modality[] = ["text", "image", "audio"];
 
+const ASR_STATUSES: AsrStatus[] = [
+  "completed",
+  "empty",
+  "unavailable",
+  "not_applicable",
+];
+
 export function parseInputEvent(raw: unknown): InputEvent {
   if (!isRecord(raw)) throw new ContractError("input", "body", "不是对象");
 
@@ -79,6 +101,15 @@ export function parseInputEvent(raw: unknown): InputEvent {
   if (!content.trim()) throw new ContractError("input", "content", "缺失或为空");
 
   const metadata = isRecord(raw.metadata) ? raw.metadata : {};
+  const asrStatus: AsrStatus = ASR_STATUSES.includes(
+    metadata.asr_status as AsrStatus,
+  )
+    ? (metadata.asr_status as AsrStatus)
+    : // 老版本上游没有该字段：退回按「有空文本即当完成」的历史行为，
+      // 避免对接旧版时语音完全不可用
+      str(metadata.asr_text).trim()
+      ? "completed"
+      : "not_applicable";
   const capabilities = Array.isArray(metadata.model_capabilities)
     ? metadata.model_capabilities.filter((item): item is Modality =>
         MODALITIES.includes(item as Modality),
@@ -94,6 +125,7 @@ export function parseInputEvent(raw: unknown): InputEvent {
       asr_text: str(metadata.asr_text),
       voiceprint_event: metadata.voiceprint_event === "wakeup" ? "wakeup" : "none",
       model_capabilities: capabilities,
+      asr_status: asrStatus,
     },
   };
 }
@@ -110,9 +142,49 @@ export function parseInputDegraded(headers: Record<string, string>): InputDegrad
   };
 }
 
+
+/**
+ * 校验并解析本轮要用的提示词配置（D-03）。
+ *
+ * 背景：本地存的是上一次运行时的 profile id，模型层的配置可能已变过
+ * （换版本、删了 profile、连了另一台模型层）。带上一个不存在的 id，
+ * 上游会整轮 404，用户表现为"突然发不出消息"，且看不到原因。
+ *
+ * 策略：**宁可本轮用默认人格，也不要整轮失败**。
+ *
+ * @param requested 本地选中的 id（空串表示用默认）
+ * @param known     模型层真实存在的 id 集合；`null` 表示还没拉到（保守放行）
+ */
+export function resolvePromptProfileId(
+  requested: string,
+  known: ReadonlySet<string> | null,
+): { profile?: string; stale?: string } {
+  const id = requested.trim();
+  if (!id) return {};
+  // 还没拿到集合（首屏早于 profile 加载）：保守传入，由上游判定
+  if (known === null) return { profile: id };
+  if (!known.has(id)) return { stale: id };
+  return { profile: id };
+}
+
 /* ------------------------------------------------------------------ */
 /* OmniNexus                                                           */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 发往模型层的**内容分区**（D-02）。
+ *
+ * 模型层的 `InboundEvent.parts[]` 原生接受 `{modality, content, metadata}`，
+ * 而 provider 层会把 `content` 当 URL 解析：`data:` URI 走 base64 内联分支，
+ * 因此**图片必须以 data URI 传入**，不能传回环 URL（模型层取不到）。
+ *
+ * 文字分区保持纯文本，不要塞 URL。
+ */
+export interface LLMPart {
+  modality: "text" | "image" | "audio";
+  content: string;
+  metadata?: Record<string, unknown>;
+}
 
 export type Emotion =
   | "joy"
