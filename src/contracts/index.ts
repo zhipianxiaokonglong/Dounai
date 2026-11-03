@@ -172,6 +172,63 @@ export function resolvePromptProfileId(
 /* ------------------------------------------------------------------ */
 
 /**
+ * 模型条目（`GET /v1/models` 的返回项）。
+ *
+ * `capabilities.inputModalities` 决定这个模型能不能看图/听音——
+ * 发图前必须先查它，否则上游会把图片降级成一句
+ * "[Image attachment omitted]"，用户只看到模型"答非所问"。
+ */
+export interface ModelEntry {
+  id: string;
+  /** 展示名（缺省用 id） */
+  label: string;
+  providerKind: "builtin" | "custom";
+  providerName: string;
+  model: string;
+  /** 支持的输入模态 */
+  inputModalities: string[];
+  contextWindow: number | null;
+  available: boolean;
+  /** 不可用原因（如 missing_api_key） */
+  unavailableReason: string | null;
+  verification: string;
+}
+
+/** 解析 `/v1/models` 的返回体。 */
+export function parseModels(raw: unknown): ModelEntry[] {
+  if (!isRecord(raw)) throw new ContractError("omninexus", "models", "不是对象");
+  const list = raw.models;
+  if (!Array.isArray(list)) {
+    throw new ContractError("omninexus", "models", "missing models array");
+  }
+  const out: ModelEntry[] = [];
+  for (const item of list) {
+    if (!isRecord(item)) continue;
+    const id = str(item.id);
+    if (!id) continue;
+    const caps = isRecord(item.capabilities) ? item.capabilities : {};
+    const modalities = Array.isArray(caps.inputModalities)
+      ? caps.inputModalities.filter((m): m is string => typeof m === "string")
+      : [];
+    out.push({
+      id,
+      label: str(item.label) || id,
+      providerKind: item.providerKind === "custom" ? "custom" : "builtin",
+      providerName: str(item.providerName),
+      model: str(item.model) || id,
+      inputModalities: modalities,
+      contextWindow: typeof caps.contextWindow === "number" ? caps.contextWindow : null,
+      available: Boolean(item.available),
+      unavailableReason: isRecord(item) && typeof item.unavailableReason === "string"
+        ? item.unavailableReason
+        : null,
+      verification: str(item.verification) || "unknown",
+    });
+  }
+  return out;
+}
+
+/**
  * 发往模型层的**内容分区**（D-02）。
  *
  * 模型层的 `InboundEvent.parts[]` 原生接受 `{modality, content, metadata}`，

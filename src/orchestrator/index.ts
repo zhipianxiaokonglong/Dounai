@@ -55,7 +55,21 @@ export interface TurnSnapshot {
  */
 export type SubmitPayload =
   | { kind: "text"; text: string }
-  | { kind: "image"; bytes: Uint8Array; filename?: string; mime?: string }
+  | {
+      kind: "image";
+      bytes: Uint8Array;
+      filename?: string;
+      mime?: string;
+      /**
+       * 当前模型是否声明支持图片输入。
+       *
+       * 由 UI 从 `/v1/models` 的 `capabilities.inputModalities` 读取后传入。
+       * 为 `false` 时**不发送**——上游收到不支持的图片只会降级成一句
+       * "[Image attachment omitted]"，用户看到的是"答非所问"。
+       * 未传（undefined）表示未知，交给上游判定。
+       */
+      modelSupportsImage?: boolean;
+    }
   | { kind: "audio"; bytes: Uint8Array; filename?: string; mime?: string; language?: string };
 
 export interface OrchestratorEvents {
@@ -86,6 +100,17 @@ function buildParts(
   }
 
   if (input.kind === "image") {
+    // 先检查模型能力：不支持就**不发**，直接说明原因
+    if (input.modelSupportsImage === false) {
+      return {
+        ok: false,
+        notice:
+          "当前模型不支持图片输入，这张图不会被读取。\n" +
+          "请在设置里换一个「可看图」的模型（面板顶部模型下拉里会标注），" +
+          "或在启动器「厂商」页为模型层接入一个视觉模型。",
+      };
+    }
+
     const mime = input.mime ?? guessImageMime(input.filename);
     if (!mime.startsWith("image/")) {
       return { ok: false, notice: "图片类型无法识别，换一张 PNG / JPEG / WebP 再试。" };
@@ -262,6 +287,22 @@ export class Orchestrator {
       degraded: false,
       modality: input.kind,
     });
+
+    // 0) 先做能力预检：模型不支持图片时**一次上传都不该发**。
+    //
+    // 这一步必须在调 input 适配器之前——否则图片已经传完才发现不支持，
+    // 既浪费带宽，语义上也像是"发了但没被理解"。
+    if (input.kind === "image" && input.modelSupportsImage === false) {
+      this.patch({
+        state: "degraded",
+        notice:
+          "当前模型不支持图片输入，这张图不会被读取。\n" +
+          "请在面板顶部的模型下拉里换一个标注「可看图」的模型，" +
+          "或在启动器「厂商」页为模型层接入一个视觉模型。",
+        degraded: true,
+      });
+      return this.getSnapshot();
+    }
 
     // 1) input：把用户输入归一化成标准事件
     let inputEvent;

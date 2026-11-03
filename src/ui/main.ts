@@ -18,7 +18,7 @@ import {
 import { createAvatar, registerAvatar, DEFAULT_AVATAR_ID, type AvatarState } from "../avatar/types.js";
 import { LogoAvatarRenderer } from "../avatar/renderers/logo.js";
 import { loadSettings, saveSettings } from "./settings.js";
-import { resolvePromptProfileId } from "../contracts/index.js";
+import { resolvePromptProfileId, type ModelEntry } from "../contracts/index.js";
 import { mountTrayBridge } from "./bridge.js";
 import { detectRuntime, resolveEndpoints } from "./runtime.js";
 
@@ -41,6 +41,7 @@ const el = {
   btnNewSession: must<HTMLButtonElement>("btn-new-session"),
   voice: must<HTMLAudioElement>("voice"),
   modelHint: must<HTMLElement>("model-hint"),
+  modelSelect: must<HTMLSelectElement>("model-select"),
   layerStatus: must<HTMLElement>("layer-status"),
   // 结构图要求的三路输入入口 + 提示词切换入口
   btnImage: must<HTMLButtonElement>("btn-image"),
@@ -72,6 +73,8 @@ let currentBubble: HTMLElement | null = null;
 let busy = false;
 /** 当前选中的提示词配置 ID（空字符串 = 用模型层默认） */
 let currentPromptProfile = settings.promptProfile ?? "";
+/** 模型清单缓存（供发图前能力检查） */
+let knownModels: ModelEntry[] = [];
 
 /**
  * 当前模型层**实际存在**的提示词配置 ID 集合（D-03）。
@@ -522,6 +525,13 @@ el.avatarHost.addEventListener("pointerup", (event) => {
   else closePanel();
 });
 
+el.modelSelect.addEventListener("change", () => {
+  const model = el.modelSelect.value;
+  settings.model = model;
+  saveSettings(settings);
+  updateModelHint();
+});
+
 el.close.addEventListener("click", closePanel);
 el.btnNewSession.addEventListener("click", () => {
   if (!confirm("开始新对话？\n\n当前对话会从界面上清空，助手也会忘记之前的上下文。")) return;
@@ -595,6 +605,72 @@ function resolvePromptProfile(): string | undefined {
   return decision.profile;
 }
 
+/** 当前选中的模型是否支持看图（决定发图是否可行）。 */
+function currentModelSupportsImage(): boolean {
+  const selected = el.modelSelect.value || settings.model || "";
+  if (!selected) {
+    // 未显式选择：只有"全部模型都不支持"时才算不支持
+    if (knownModels.length === 0) return true;
+    return knownModels.some((m) => m.inputModalities.includes("image"));
+  }
+  const entry = knownModels.find((m) => m.id === selected);
+  if (!entry) return true; // 未知模型不拦（交由上游判定）
+  return entry.inputModalities.includes("image");
+}
+
+/** 读取模型清单并渲染下拉。 */
+async function loadModels(): Promise<void> {
+  try {
+    knownModels = await adapters.llm.listModels();
+  } catch {
+    // 模型层不可用：保留默认项，不阻断对话
+    knownModels = [];
+    el.modelSelect.replaceChildren();
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "模型层不可用";
+    el.modelSelect.appendChild(opt);
+    el.modelSelect.disabled = true;
+    el.modelHint.textContent = "模型层不可用";
+    return;
+  }
+
+  el.modelSelect.disabled = false;
+  el.modelSelect.replaceChildren();
+
+  const auto = document.createElement("option");
+  auto.value = "";
+  auto.textContent = "自动选择模型";
+  el.modelSelect.appendChild(auto);
+
+  for (const m of knownModels) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    // 标注可用性与视觉能力，用户一眼能看出能不能发图
+    const marks: string[] = [];
+    if (!m.available) marks.push("不可用");
+    if (m.inputModalities.includes("image")) marks.push("可看图");
+    if (m.providerKind === "custom") marks.push("自定义");
+    opt.textContent = `${m.label}${marks.length ? "（" + marks.join("、") + "）" : ""}`;
+    opt.disabled = !m.available;
+    if (m.id === settings.model) opt.selected = true;
+    el.modelSelect.appendChild(opt);
+  }
+
+  updateModelHint();
+}
+
+function updateModelHint(): void {
+  const selected = el.modelSelect.value;
+  const entry = knownModels.find((m) => m.id === selected);
+  if (!entry) {
+    el.modelHint.textContent = selected ? `模型：${selected}` : "自动选择模型";
+    return;
+  }
+  const vision = entry.inputModalities.includes("image") ? "可看图" : "不支持图片";
+  el.modelHint.textContent = `${entry.providerName || "?"} · ${vision}`;
+}
+
 el.composer.addEventListener("submit", (event) => {
   event.preventDefault();
   void send(el.input.value);
@@ -613,7 +689,7 @@ async function send(raw: string): Promise<void> {
   try {
     const snapshot = await orchestrator.submit(
       { kind: "text", text },
-      { sessionId, promptProfile: resolvePromptProfile() },
+      { sessionId, promptProfile: resolvePromptProfile(), model: el.modelSelect.value || undefined },
     );
     syncAudio(snapshot);
     if (!snapshot.audioUrl) orchestrator.notifyTextSettled();
@@ -642,8 +718,10 @@ async function sendImage(file: File): Promise<void> {
         bytes,
         filename: file.name || undefined,
         mime: file.type || undefined,
+        // 发图前先查当前模型能力（不支持就不发，避免上游降级成"答非所问"）
+        modelSupportsImage: currentModelSupportsImage(),
       },
-      { sessionId, promptProfile: resolvePromptProfile() },
+      { sessionId, promptProfile: resolvePromptProfile(), model: el.modelSelect.value || undefined },
     );
     syncAudio(snapshot);
     if (!snapshot.audioUrl) orchestrator.notifyTextSettled();
@@ -708,7 +786,7 @@ async function sendAudio(blob: Blob): Promise<void> {
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const snapshot = await orchestrator.submit(
       { kind: "audio", bytes, filename: "voice.webm", mime: "audio/webm", language: "zh" },
-      { sessionId, promptProfile: resolvePromptProfile() },
+      { sessionId, promptProfile: resolvePromptProfile(), model: el.modelSelect.value || undefined },
     );
     syncAudio(snapshot);
     if (!snapshot.audioUrl) orchestrator.notifyTextSettled();

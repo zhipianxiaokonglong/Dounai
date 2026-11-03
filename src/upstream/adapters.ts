@@ -14,6 +14,7 @@ import {
   type InputEvent,
   type LLMEvent,
   type MetaFrame,
+  type ModelEntry,
   type OutputEvent,
   type RouteFrame,
   type UpstreamError,
@@ -25,6 +26,7 @@ import {
   parseInputEvent,
   parseLLMEvent,
   parseMeta,
+  parseModels,
   parseOutputEvent,
   parseRoute,
   parseUpstreamError,
@@ -301,6 +303,24 @@ export class LLMAdapter {
       return res.status >= 200 && res.status < 400;
     } catch {
       return false;
+    }
+  }
+
+  /** 读取模型清单（含能力与可用性）。 */
+  async listModels(): Promise<ModelEntry[]> {
+    try {
+      const res = await request({
+        url: `${this.base}/v1/models`,
+        method: "GET",
+        timeoutMs: TIMEOUTS.probe,
+      });
+      if (res.status < 200 || res.status >= 400) {
+        throw new UpstreamUnavailableError("omninexus", `HTTP ${res.status}`);
+      }
+      const raw = JSON.parse(res.body) as unknown;
+      return parseModels(raw);
+    } catch (error) {
+      throw toUpstreamError("omninexus", "listModels", error);
     }
   }
 
