@@ -1,7 +1,7 @@
 {
   "name": "dounai",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Dounai — 开源 AI 情感助手 · 桌面悬浮窗组装层",
   "license": "GPL-3.0-or-later",
   "type": "module",
