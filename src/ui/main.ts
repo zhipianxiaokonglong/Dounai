@@ -893,6 +893,8 @@ el.modelHint.textContent = settings.model ? `模型：${settings.model}` : "自�
 
 void (async () => {
   const health = await orchestrator.probe();
+  // 模型清单与探活并行拉取：清单失败不影响面板可用性
+  await loadModels();
   if (lastSnapshot) render(lastSnapshot, "");
 
   // 无论上游是否就绪都展开面板：
