@@ -15,6 +15,8 @@ use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, Runtime, WebviewWindow, WindowEvent,
 };
 
+mod admin;
+
 mod proxy;
 
 const WIN_W: f64 = 360.0;
@@ -68,6 +70,7 @@ fn main() {
             set_always_on_top,
             hide_window,
             quit_app,
+            admin::open_module_admin,
             proxy::upstream_request,
         ])
         .run(tauri::generate_context!())
@@ -520,3 +523,5 @@ mod tests {
         );
     }
 }
+
+

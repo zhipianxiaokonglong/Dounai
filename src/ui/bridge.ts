@@ -72,3 +72,19 @@ export async function notifyPanelVisibility(visible: boolean): Promise<void> {
     // 主进程未实现该命令时不影响 UI
   }
 }
+
+/**
+ * 用系统浏览器打开某层模块的管理界面。
+ *
+ * 地址由 Rust 侧按固定表拼装，前端只传模块 id。
+ * 管理界面由各模块自带，密钥归各模块保管——本窗口不涉及。
+ */
+export async function openModuleAdmin(moduleId: string): Promise<string> {
+  const tauri = getTauri();
+  const invoke = tauri?.core?.invoke ?? tauri?.invoke;
+  if (!invoke) {
+    throw new Error("当前环境没有 Tauri 桥接，无法打开管理界面");
+  }
+  const result = await invoke("open_module_admin", { moduleId });
+  return String(result);
+}

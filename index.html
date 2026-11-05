@@ -43,6 +43,13 @@
 
         <!-- 三层厂商/连接状态：只做展示，密钥配置在启动器里（本窗口不保存任何密钥） -->
         <div id="layer-status" class="panel__layers" hidden></div>
+        <!-- 管理入口：直接用系统浏览器打开对应模块的自带管理界面。
+             本窗口不承载管理界面（它是 360×420 的常驻小窗），也不保存密钥。 -->
+        <div class="panel__layers" id="layer-admin">
+          <button class="panel__admin-btn" id="btn-admin-input">输入层管理</button>
+          <button class="panel__admin-btn" id="btn-admin-llm">模型层管理</button>
+          <button class="panel__admin-btn" id="btn-admin-output">语音层管理</button>
+        </div>
 
         <!-- 对话区不可拖：用户需要能选中文字复制 -->
         <div id="stream" class="panel__stream" role="log" aria-live="polite">

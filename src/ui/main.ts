@@ -19,7 +19,8 @@ import { createAvatar, registerAvatar, DEFAULT_AVATAR_ID, type AvatarState } fro
 import { LogoAvatarRenderer } from "../avatar/renderers/logo.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import { resolvePromptProfileId, type ModelEntry } from "../contracts/index.js";
-import { mountTrayBridge } from "./bridge.js";
+import { mountTrayBridge ,
+  openModuleAdmin} from "./bridge.js";
 import { detectRuntime, resolveEndpoints } from "./runtime.js";
 
 registerAvatar("logo", () => new LogoAvatarRenderer());
@@ -43,6 +44,9 @@ const el = {
   modelHint: must<HTMLElement>("model-hint"),
   modelSelect: must<HTMLSelectElement>("model-select"),
   layerStatus: must<HTMLElement>("layer-status"),
+  adminInput: document.getElementById("btn-admin-input") as HTMLButtonElement | null,
+  adminLlm: document.getElementById("btn-admin-llm") as HTMLButtonElement | null,
+  adminOutput: document.getElementById("btn-admin-output") as HTMLButtonElement | null,
   // 结构图要求的三路输入入口 + 提示词切换入口
   btnImage: must<HTMLButtonElement>("btn-image"),
   btnVoice: must<HTMLButtonElement>("btn-voice"),
@@ -273,6 +277,22 @@ function renderStream(snapshot: TurnSnapshot, text: string): void {
  * 密钥由启动器的「厂商」页写入，启动模块时以环境变量注入上游，
  * 悬浮窗这一侧根本拿不到密钥（见 launcher 的 vendor_keys 设计）。
  */
+/**
+ * 打开某层模块的管理界面（系统浏览器）。
+ *
+ * 打不开时给出可执行的下一步，而不是只说"失败"。
+ */
+async function openAdminFor(moduleId: string): Promise<void> {
+  try {
+    await openModuleAdmin(moduleId);
+    el.notice.textContent = `已在浏览器打开 ${moduleId} 的管理界面。`;
+  } catch (error) {
+    const message = error instanceof Error && error.message ? error.message : String(error);
+    el.notice.textContent =
+      `打不开 ${moduleId} 的管理界面：${message}。请先用启动器启动该模块。`;
+  }
+}
+
 function renderLayerStatus(snapshot: TurnSnapshot): void {
   const layers: Array<[string, boolean]> = [
     ["输入", snapshot.health.input],
@@ -298,8 +318,8 @@ function renderLayerStatus(snapshot: TurnSnapshot): void {
     const hint = document.createElement("span");
     hint.className = "panel__layers-hint";
     hint.textContent =
-      `${down.join("、")}不可用。请到启动器的「厂商」页配置厂商密钥并重启对应模块` +
-      "（本窗口不保存密钥）。";
+            `${down.join("、")}不可用。点上方「管理」按钮在浏览器里配置厂商，` +
+        "配完后重启对应模块（本窗口不保存密钥）。";
     el.layerStatus.appendChild(hint);
   }
 }
@@ -531,6 +551,15 @@ el.modelSelect.addEventListener("change", () => {
   saveSettings(settings);
   updateModelHint();
 });
+
+// 管理入口：三层各自打开对应模块的自带管理界面
+for (const [btn, moduleId] of [
+  [el.adminInput, "dounai-input"],
+  [el.adminLlm, "omninexus"],
+  [el.adminOutput, "moodvoice"],
+] as const) {
+  btn?.addEventListener("click", () => void openAdminFor(moduleId));
+}
 
 el.close.addEventListener("click", closePanel);
 el.btnNewSession.addEventListener("click", () => {

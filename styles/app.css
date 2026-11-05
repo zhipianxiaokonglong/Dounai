@@ -562,3 +562,23 @@ body {
     background: rgba(255, 255, 255, 0.07);
   }
 }
+
+/* 管理入口按钮：低调但可点，与层状态条同一行风格 */
+.panel__admin-btn {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  color: inherit;
+  cursor: pointer;
+}
+
+.panel__admin-btn:hover {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.panel__admin-btn:active {
+  transform: translateY(1px);
+}
