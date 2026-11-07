@@ -700,6 +700,44 @@ export function userFacingError(error: unknown): string {
       case "invalid_response":
         return "语音合成异常，本条先只显示文字。";
 
+      /* --- 输入层（小写码，此前全部未映射）--- */
+      case "payload_too_large":
+        return "内容太大了，超过了输入层的单次上限。请裁剪或压缩后重试。";
+      case "unsupported_media":
+        return "输入层不支持这种文件格式。图片用 PNG / JPEG / WebP，音频用 WAV / MP3 / M4A。";
+      case "invalid_input":
+      case "invalid_request":
+        return "输入内容不符合要求，请检查后重试。";
+      case "unauthorized":
+        return "输入层要求鉴权但凭证无效。请检查输入层的 API 令牌配置。";
+      case "forbidden_origin":
+        return "输入层拒绝了这次请求的来源（域名白名单未通过）。请检查输入层的来源配置。";
+      case "privacy_disabled":
+        return "输入层的隐私模式已关闭相关能力，本次内容未上传。请到输入层控制台确认隐私设置。";
+      case "consent_required":
+        return "这次操作需要先获得你的授权（语音/摄像头等），当前未授权，已中止。";
+      case "provider_unavailable":
+        return "输入层依赖的厂商服务暂时不可用，稍后再试。";
+      case "conflict":
+        return "输入层状态冲突（可能上一次请求尚未完成），稍后重试。";
+      case "not_found":
+        return "输入层找不到对应的资源（可能是媒体已过期或被清理）。";
+
+      /* --- 语音层补充（此前部分未映射）--- */
+      case "invalid_event":
+        return "语音层收到了不合法的事件内容，本条只显示文字。";
+      case "unsupported_format":
+        return "语音层不支持该音频格式，本条只显示文字。";
+      case "unknown_provider":
+        return "语音层配置的厂商不存在或已删除，请到语音层控制台重新选择。";
+      case "timeout":
+        return "语音合成超时，本条先只显示文字。";
+      case "cache_write_failed":
+      case "cache_error":
+        return "语音缓存读写失败（不影响本次内容），本条仍可正常显示文字。";
+      case "internal_error":
+        return "上游内部错误，稍后再试；若持续出现请查看该模块日志。";
+
       /* --- 代理 / 开发模式 --- */
       case "origin_not_allowed":
         return "上游拒绝了跨域请求，请通过桌面应用运行（详见排障文档）。";

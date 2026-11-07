@@ -111,13 +111,26 @@ meta → route → delta* → warning → final          （已输出部分后�
 }
 ```
 
-| 字段 | 语义 | 组装层用途 |
-|---|---|---|
-| `event_id` | 同一回合所有帧一致 | 归并键 |
-| `content` | delta 为增量；final 为完整文本 | **UI 只以 final 为准做最终渲染**，delta 用于即时上屏 |
-| `tags.emotion` | joy/sadness/anger/fear/surprise/confusion/frustration/gratitude/neutral（**仅这 9 类**，无 comfort/calm/apology） | 情感态预留 + 传给 `output`；`output` 用自己的 aliases 映射到它的 12 类 |
-| `tags.type` | text/code/list/table/json/mixed | 渲染方式（代码块不朗读） |
-| `tags.intent` | reply/tool/linkage | `output` 据此决定是否合成语音 |
+情绪标签为 **Emotion contract v2 的 12 类**，与
+`OmniNexus/core/emotions.py::PUBLIC_EMOTION_LABELS` 和
+`MoodVoice/config/emotion_styles.yaml` 完全一致：
+
+```
+neutral, joy, excitement, comfort, tenderness, calm,
+sadness, apology, encouragement, surprise, frustration, anger
+```
+
+**旧版别名**（上游仍接受，会映射到新类，消费方不应视为越界）：
+
+| 旧值 | 映射到 |
+|---|---|
+| `fear` | `sadness` |
+| `confusion` | `frustration` |
+| `gratitude` | `joy` |
+
+> 历史说明：本文档曾声明 9 类并写明「无 comfort/calm/apology」。
+> 该口径与两家上游的实际实现不符（它们早已是 12 类，且
+> `emotion_styles.yaml` 的 12 个键与之一一对应），现按上游为准修正。
 
 **关键约束**：delta 的 tags 是「当前已累积文本」的临时值，可能变化；
 下游必须使用 `final` 的 tags。组装层遵守此约定，避免情感标签抖动导致表情乱跳。

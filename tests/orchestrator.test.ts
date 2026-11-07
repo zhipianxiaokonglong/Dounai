@@ -40,6 +40,7 @@ function makeLLMEvent(overrides: Partial<LLMEvent> = {}): LLMEvent {
     session_id: "sess-1",
     content: "我在呢，慢慢说。",
     stream: false,
+    // 契约内情绪（v2 的 12 类之一）。注意 gratitude 是旧版别名，不算正式类
     tags: { emotion: "comfort", type: "text", intent: "reply" },
     ...overrides,
   };
@@ -262,14 +263,14 @@ describe("Orchestrator 正常链路", () => {
           callbacks.onDelta?.(
             makeLLMEvent({ stream: true, tags: { emotion: "neutral", type: "text", intent: "reply" } }),
           );
-          const final = makeLLMEvent({ tags: { emotion: "gratitude", type: "text", intent: "reply" } });
+          const final = makeLLMEvent({ tags: { emotion: "comfort", type: "text", intent: "reply" } });
           callbacks.onFinal?.(final);
           return final;
         }),
       },
     });
     const snapshot = await orchestrator.submit("谢谢");
-    expect(snapshot.emotion).toBe("gratitude");
+    expect(snapshot.emotion).toBe("comfort");
   });
 
   it("同一 final 不重复合成（幂等）", async () => {

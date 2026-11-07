@@ -243,24 +243,99 @@ export interface LLMPart {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * 情绪标签（Emotion contract v2）。
+ *
+ * 12 类，与 OmniNexus `core/emotions.py::PUBLIC_EMOTION_LABELS` 及
+ * MoodVoice `config/emotion_styles.yaml` 完全一致。
+ *
+ * 此前这里是 9 类（含 fear/confusion/gratitude、缺 comfort/calm/apology），
+ * 那份口径已被两家上游废弃——`fear/confusion/gratitude` 现在是
+ * **旧版别名**（见 LEGACY_EMOTION_ALIASES），由上游映射到新类。
+ */
 export type Emotion =
+  | "neutral"
   | "joy"
+  | "excitement"
+  | "comfort"
+  | "tenderness"
+  | "calm"
   | "sadness"
-  | "anger"
-  | "fear"
+  | "apology"
+  | "encouragement"
   | "surprise"
-  | "confusion"
   | "frustration"
-  | "gratitude"
-  | "neutral";
+  | "anger";
 
 export type ContentType = "text" | "code" | "list" | "table" | "json" | "mixed";
 export type Intent = "reply" | "tool" | "linkage";
 
+const EMOTIONS: readonly Emotion[] = [
+  "neutral",
+  "joy",
+  "excitement",
+  "comfort",
+  "tenderness",
+  "calm",
+  "sadness",
+  "apology",
+  "encouragement",
+  "surprise",
+  "frustration",
+  "anger",
+];
+
+/**
+ * 旧版情绪别名（与 OmniNexus `LEGACY_EMOTION_ALIASES` 保持一致）。
+ *
+ * 旧客户端可能发这些值；上游会映射到新类。消费方也应照做，
+ * 否则会把**合法的旧值**误判为越界。
+ */
+const LEGACY_EMOTION_ALIASES: Readonly<Record<string, Emotion>> = {
+  fear: "sadness",
+  confusion: "frustration",
+  gratitude: "joy",
+};
+const CONTENT_TYPES: readonly ContentType[] = ["text", "code", "list", "table", "json", "mixed"];
+const INTENTS: readonly Intent[] = ["reply", "tool", "linkage"];
+
+const isOneOf = <T extends string>(list: readonly T[], v: string): v is T =>
+  (list as readonly string[]).includes(v);
+
+/**
+ * 把上游情绪标签归一化到契约内的 9 类。
+ *
+ * 上游可能返回契约外的值（例如模型层 v2 的 12 类情绪）。
+ * 静默强转会让类型撒谎，抛错又会让整条回合失败，因此落到 `neutral`，
+ * 并通过 `unknown` 标记告知调用方"上游越界"。
+ */
+export function normalizeEmotion(raw: unknown): { value: Emotion; unknown: boolean } {
+  const s = str(raw, "neutral");
+  if (isOneOf(EMOTIONS, s)) return { value: s, unknown: false };
+  // 旧版别名不算越界：按上游同一张表映射
+  const alias = LEGACY_EMOTION_ALIASES[s];
+  if (alias) return { value: alias, unknown: false };
+  return { value: "neutral", unknown: true };
+}
+
+export function normalizeContentType(raw: unknown): { value: ContentType; unknown: boolean } {
+  const s = str(raw, "text");
+  return isOneOf(CONTENT_TYPES, s)
+    ? { value: s, unknown: false }
+    : { value: "text", unknown: true };
+}
+
+export function normalizeIntent(raw: unknown): { value: Intent; unknown: boolean } {
+  const s = str(raw, "reply");
+  return isOneOf(INTENTS, s)
+    ? { value: s, unknown: false }
+    : { value: "reply", unknown: true };
+}
+
 export interface OutputTags {
-  emotion: string;
-  type: string;
-  intent: string;
+  emotion: Emotion;
+  type: ContentType;
+  intent: Intent;
 }
 
 export interface LLMEvent {
@@ -308,10 +383,11 @@ export function parseLLMEvent(raw: unknown, stream: boolean): LLMEvent {
     content: str(raw.content),
     stream: bool(raw.stream, stream),
     tags: {
-      // 上游未给标签时用中性值，避免 UI 出现空白状态
-      emotion: str(tagsRaw.emotion, "neutral"),
-      type: str(tagsRaw.type, "text"),
-      intent: str(tagsRaw.intent, "reply"),
+      // 上游未给标签时用中性值，避免 UI 出现空白状态；
+      // 越界值（如模型层 v2 的 12 类情绪）由归一化函数收敛到契约内
+      emotion: normalizeEmotion(tagsRaw.emotion).value,
+      type: normalizeContentType(tagsRaw.type).value,
+      intent: normalizeIntent(tagsRaw.intent).value,
     },
   };
 }
@@ -363,13 +439,50 @@ export interface UpstreamError {
   requestId: string | null;
 }
 
+/**
+ * 按错误码推断「是否值得重试」。
+ *
+ * 为什么需要：输入层与语音层的错误体**不带 `retryable` 字段**
+ * （只有模型层带）。缺省成 `false` 会把"厂商临时故障"也判成不可重试，
+ * 而缺省成 `true` 又会让"参数错误"被无意义地重试。
+ *
+ * 因此按语义分三类：
+ * - 临时性（网络/厂商/超时/冲突）→ 可重试
+ * - 参数性（输入非法/超限/不支持）→ 不可重试
+ * - 权限性（鉴权/隐私/同意）→ 不可重试
+ */
+const RETRYABLE_CODES = new Set([
+  // 临时性故障
+  "provider_unavailable",
+  "timeout",
+  "internal_error",
+  "conflict",
+  "cache_write_failed",
+  "cache_error",
+  "unknown_provider",
+  "provider_error",
+  "connection_error",
+  // 模型层大写码（有 retryable 时以上游为准，这里只作兜底）
+  "PROVIDER_RATE_LIMITED",
+  "PROVIDER_TIMEOUT",
+  "PROVIDER_TIMEOUT_RETRY",
+  "PROVIDER_ERROR",
+  "PROVIDER_BAD_RESPONSE",
+  "INTERNAL_ERROR",
+  "ALL_PROVIDERS_FAILED",
+]);
+
 export function parseUpstreamError(raw: unknown): UpstreamError {
   const root = isRecord(raw) ? raw : {};
   const error = isRecord(root.error) ? root.error : root;
+  const code = str(error.code, "UNKNOWN");
   return {
-    code: str(error.code, "UNKNOWN"),
+    code,
     message: str(error.message),
-    retryable: bool(error.retryable),
+    // 上游明确给了就用它；没给则按码推断
+    retryable: typeof error.retryable === "boolean"
+      ? error.retryable
+      : RETRYABLE_CODES.has(code),
     requestId: typeof error.request_id === "string" ? error.request_id : null,
   };
 }
