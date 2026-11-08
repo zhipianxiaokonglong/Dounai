@@ -9,21 +9,40 @@
 
 import type { AvatarContext, AvatarRenderer, AvatarState, AvatarTheme } from "../types.js";
 
+/**
+ * 默认 logo。
+ *
+ * ⚠️ 颜色必须写在 `<style>` 的 **CSS 规则**里，不能写成 SVG 属性。
+ * SVG 的 presentation attribute（`fill` / `stroke` / `stop-color`）
+ * 只接受具体颜色值，**不支持 `var()`**；写成属性会解析失败并回退成
+ * 灰色/黑色，表现就是「右下角图标变成灰黑一片、几乎看不见」。
+ * （`var()` 只在 CSS 声明上下文里生效。）
+ *
+ * 每个变量都给了 fallback 颜色，即使宿主没注入变量也不会变黑。
+ */
 const LOGO_SVG = `
 <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <style>
+    .dg-grad-a { stop-color: var(--avatar-accent, #5b8def); }
+    .dg-grad-b { stop-color: var(--avatar-accent-2, #7aa2f7); }
+    .dg-ring   { stroke: rgba(255, 255, 255, .35); }
+    .dg-bubble { fill: rgba(255, 255, 255, .92); }
+    .dg-dot    { fill: var(--avatar-accent, #5b8def); }
+    .dg-smile  { stroke: var(--avatar-accent, #5b8def); }
+  </style>
   <defs>
     <linearGradient id="dounai-grad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="var(--avatar-accent)"/>
-      <stop offset="100%" stop-color="var(--avatar-accent-2)"/>
+      <stop offset="0%" class="dg-grad-a"/>
+      <stop offset="100%" class="dg-grad-b"/>
     </linearGradient>
   </defs>
   <circle cx="64" cy="64" r="56" fill="url(#dounai-grad)"/>
-  <circle cx="64" cy="64" r="56" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="2"/>
+  <circle cx="64" cy="64" r="56" fill="none" class="dg-ring" stroke-width="2"/>
   <path d="M44 52c0-4 3-7 7-7h34c4 0 7 3 7 7v20c0 4-3 7-7 7H60l-12 10v-10h-3c-4 0-7-3-7-7z"
-        fill="rgba(255,255,255,.92)"/>
-  <circle cx="56" cy="62" r="3.4" fill="var(--avatar-accent)"/>
-  <circle cx="72" cy="62" r="3.4" fill="var(--avatar-accent)"/>
-  <path d="M56 70c3 3 13 3 16 0" fill="none" stroke="var(--avatar-accent)" stroke-width="3"
+        class="dg-bubble"/>
+  <circle cx="56" cy="62" r="3.4" class="dg-dot"/>
+  <circle cx="72" cy="62" r="3.4" class="dg-dot"/>
+  <path d="M56 70c3 3 13 3 16 0" fill="none" class="dg-smile" stroke-width="3"
         stroke-linecap="round"/>
 </svg>`;
 
