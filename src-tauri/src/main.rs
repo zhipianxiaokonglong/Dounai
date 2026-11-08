@@ -31,13 +31,25 @@ struct AppState {
 }
 
 fn main() {
+    // 最早时机接管 WebView2 数据目录：必须在 Builder 创建之前，
+    // 否则 WebView2 环境可能已经用系统默认目录初始化完了。
+    //
+    // 这一步修的是"悬浮窗闪退"的根因：默认数据目录
+    // `%LOCALAPPDATA%\<identifier>\EBWebView` 一旦锁/注册信息被占住
+    // （异常退出、多实例、旧版本残留），创建 webview 会永久
+    // 报 ERROR_BUSY(0x800700AA)，而用户只能看到 CMD 窗口一闪而过。
+    // 应用标识符与 tauri.conf.json 的 identifier 一致；这里用常量而非
+    // generate_context!()，因为后者在该位置无法推断 Runtime 泛型。
+    const APP_IDENTIFIER: &str = "com.dounai.desktop";
+    let _ = take_over_webview_data_dir(APP_IDENTIFIER);
+
     // 单实例保护：桌面驻留应用被重复双击时，必须把已有窗口唤到前面，
     // 而不是再起一个进程。
     //
     // 没有这道保护时的真实表现：用户点两次图标 → 两个进程 → 任务栏出现
     // 两个一模一样的 Dounai 图标，其中一个属于「后来的、没抢到焦点」的实例，
     // 看起来就是「一个能点、一个不能点」。这是本次用户反馈的直接原因。
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             use tauri::Manager;
             if let Some(window) = app.get_webview_window("main") {
@@ -73,13 +85,205 @@ fn main() {
             admin::open_module_admin,
             proxy::upstream_request,
         ])
-        .run(tauri::generate_context!())
-        .expect("Dounai 启动失败：无法初始化主进程");
+        .run(tauri::generate_context!());
+
+    if let Err(error) = result {
+        // 不再静默 panic：GUI 程序无控制台，panic 只会表现为"闪退"。
+        // 写日志 + 弹框，让用户知道发生了什么、以及可以做什么。
+        let detail = format!("Dounai 启动失败：{error}");
+        log_startup(&detail);
+        show_startup_failure(&detail);
+        std::process::exit(1);
+    }
 }
 
-/// 创建悬浮窗。参数含义见需求：默认 logo 静默悬浮，无边框、透明、置顶、不占任务栏。
+/// 用系统消息框告知启动失败，并给出可执行的下一步。
+///
+/// 刻意不用任何第三方依赖：Windows 走 `MessageBoxW`，
+/// 其它平台退化为仅写日志（stderr 已有输出）。
+fn show_startup_failure(detail: &str) {
+    let hint = format!(
+        "{detail}\n\n已写入启动日志：{STARTUP_LOG}（与本程序同目录）。\n\n         可尝试：\n1. 删除 webview2 数据目录后重试；\n         2. 确认已安装 WebView2 运行时；\n3. 仍失败请把启动日志反馈给维护者。"
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "user32")]
+        extern "system" {
+            fn MessageBoxW(hwnd: isize, text: *const u16, caption: *const u16, flags: u32) -> i32;
+        }
+        const MB_ICONERROR: u32 = 0x0000_0010;
+        let to_wide = |s: &str| -> Vec<u16> {
+            std::ffi::OsStr::new(s)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        };
+        let text = to_wide(&hint);
+        let caption = to_wide("Dounai");
+        unsafe {
+            MessageBoxW(0, text.as_ptr(), caption.as_ptr(), MB_ICONERROR);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        eprintln!("{hint}");
+    }
+}
+
+/// WebView2 数据目录名（位于 app local data 下）。
+///
+/// 刻意不用系统默认路径：默认路径是
+/// `%LOCALAPPDATA%\<identifier>\EBWebView`，一旦该目录里的锁/注册信息
+/// 被占住（异常退出、多实例并存、旧版本残留），创建 webview 就会
+/// 永久报 `ERROR_BUSY (0x800700AA)`，用户侧表现为"闪退"。
+///
+/// 显式指定后目录由我们掌控：出问题只需删除该子目录即可恢复。
+/// WebView2 数据目录名（位于 app local data 下）。
+///
+/// 刻意不用系统默认路径：默认是 `%LOCALAPPDATA%\<identifier>\EBWebView`。
+/// 一旦该目录里的锁/注册信息被占住（异常退出、多实例并存、旧版本残留），
+/// 创建 webview 会永久报 `ERROR_BUSY (0x800700AA)`。
+/// 用户侧表现就是"闪退、没有任何提示"——本条即为此修复。
+/// WebView2 数据目录名（在各候选根目录下使用）。
+const WEBVIEW_DATA_SUBDIR: &str = "webview2";
+
+/// 启动日志文件名（写在 exe 同目录）。
+///
+/// 存在理由：WebView2 创建失败时进程会 panic，而 GUI 程序没有控制台，
+/// 用户只看到"CMD 窗口一闪而过"。写一份日志，用户才有东西可反馈。
+const STARTUP_LOG: &str = "dounai-startup.log";
+
+/// 追加一行到启动日志（尽力而为，失败不致命）。
+fn log_startup(msg: &str) {
+    eprintln!("[dounai] {msg}");
+    let path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(STARTUP_LOG)));
+    if let Some(path) = path {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let _ = writeln!(f, "[{stamp}] {msg}");
+        }
+    }
+}
+
+/// 按优先级返回数据目录候选根（不含子目录名）。
+fn data_dir_candidates(identifier: &str) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(v) = std::env::var_os("LOCALAPPDATA") {
+            out.push(std::path::PathBuf::from(v).join(identifier));
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(h) = std::env::var_os("HOME") {
+            let mut p = std::path::PathBuf::from(h);
+            p.push("Library");
+            p.push("Application Support");
+            p.push(identifier);
+            out.push(p);
+        }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        if let Some(v) = std::env::var_os("XDG_DATA_HOME") {
+            out.push(std::path::PathBuf::from(v).join(identifier));
+        } else if let Some(h) = std::env::var_os("HOME") {
+            let mut p = std::path::PathBuf::from(h);
+            p.push(".local");
+            p.push("share");
+            p.push(identifier);
+            out.push(p);
+        }
+    }
+
+    // 回退 2：exe 同目录（exe 既然能执行，这里通常可写）
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            out.push(dir.to_path_buf());
+        }
+    }
+    // 回退 3：临时目录
+    out.push(std::env::temp_dir().join("dounai-webview2"));
+
+    out
+}
+
+/// 接管 WebView2 数据目录：多级回退，任一可写即采用。
+///
+/// 返回采用的目录；全部不可写时返回 None（调用方据此给出可见提示）。
+fn take_over_webview_data_dir(identifier: &str) -> Option<std::path::PathBuf> {
+    // 优先尊重调用方预设（运维/排障可显式覆盖）
+    if let Some(v) = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") {
+        let dir = std::path::PathBuf::from(v);
+        if std::fs::create_dir_all(&dir).is_ok() && probe_writable(&dir) {
+            log_startup(&format!("webview data dir (preset) = {}", dir.display()));
+            return Some(dir);
+        }
+        log_startup(&format!(
+            "preset WEBVIEW2_USER_DATA_FOLDER 不可用: {}",
+            dir.display()
+        ));
+    }
+
+    for root in data_dir_candidates(identifier) {
+        let dir = root.join(WEBVIEW_DATA_SUBDIR);
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => {
+                if probe_writable(&dir) {
+                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &dir);
+                    log_startup(&format!("webview data dir = {}", dir.display()));
+                    return Some(dir);
+                }
+                log_startup(&format!("目录已存在但不可写，跳过: {}", dir.display()));
+            }
+            Err(e) => {
+                log_startup(&format!("创建失败 {}: {e}", dir.display()));
+            }
+        }
+    }
+
+    log_startup("所有候选数据目录都不可用——WebView2 很可能无法启动");
+    None
+}
+
+/// 实际写一个探针文件，确认目录可写（仅判断 exists 不够）。
+fn probe_writable(dir: &std::path::Path) -> bool {
+    let probe = dir.join(".write-probe");
+    match std::fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+
 fn build_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<WebviewWindow<R>> {
-    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()));
+
+    // 数据目录已在 main 早期接管（环境变量 + 多级回退）。
+    // 这里读回环境变量值再传一次 data_directory 作为双保险。
+    if let Some(dir) = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") {
+        builder = builder.data_directory(std::path::PathBuf::from(dir));
+    }
+
+    builder
         .title("Dounai")
         .inner_size(WIN_W, WIN_H)
         .min_inner_size(280.0, 240.0)

@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "build:exe": "tauri build --no-bundle",
+    "deploy:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-exe.ps1"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
