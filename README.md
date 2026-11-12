@@ -3,7 +3,7 @@
 > 一款开源的 AI 情感助手——为孤独而有技术能力的你，提供有温度、且真正属于你自己的智能陪伴。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-109%20passed-brightgreen)](docs/TEST_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-190%2B%20passed-brightgreen)](docs/TEST_REPORT.md)
 ![Status](https://img.shields.io/badge/status-开发中-orange)
 
 **本仓库是 Dounai 的「组装层 + 桌面悬浮窗」**：它把输入层、模型层、语音层三个独立模块
@@ -301,10 +301,13 @@ data: {"event_id":"…","session_id":"…","content":"完整文本","stream":fal
        "tags":{"emotion":"sadness","type":"text","intent":"reply"}}
 ```
 
-> `tags.emotion` 的**模型层产出只有 9 类**：
-> `joy / sadness / anger / fear / surprise / confusion / frustration / gratitude / neutral`。
-> 语音层接受更多标签（含 `comfort / calm / apology` 等 12 类），由语音层的 aliases 做映射。
-> 不要把语音层的标签当成模型层会返回的值。
+> `tags.emotion` 的**模型层产出为 12 类**（Emotion contract v2）：
+> `neutral / joy / excitement / comfort / tenderness / calm /`
+> `sadness / apology / encouragement / surprise / frustration / anger`。
+>
+> 旧版的 `fear / confusion / gratitude` 已降级为**别名**，上游会映射到
+> `sadness / frustration / joy`。消费方按同表映射即可，不应视为未知值。
+> 详见 `docs/contracts.md`。
 
 语音层的输出事件：
 

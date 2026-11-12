@@ -163,6 +163,7 @@ function render(snapshot: TurnSnapshot, text: string): void {
   el.app.dataset.state = snapshot.state;
   renderBadge(snapshot);
   renderWelcomeHint(snapshot.health);
+  renderThinkingHint(snapshot);
   renderLayerStatus(snapshot);
   renderStream(snapshot, text);
   renderNotice(snapshot);
@@ -207,6 +208,20 @@ function hideBadge(): void {
  * 只显示一个徽标是不够的——用户面对一个发不出消息的输入框，
  * 会以为是自己操作错了。这里把「缺什么、怎么办」直接写在对话区。
  */
+/**
+ * 思考中提示。
+ *
+ * 为什么不塞进 renderWelcomeHint：那个函数只在完全没有内容时生效，
+ * 而 thinking 是进行中状态，语义不同。
+ * 只在没有已上屏文本时改写提示，避免覆盖用户已看到的回答。
+ */
+function renderThinkingHint(snapshot: TurnSnapshot): void {
+  const thinking = snapshot.state === "thinking";
+  el.emptyHint.dataset.thinking = thinking ? "true" : "false";
+  if (!thinking || snapshot.text) return;
+  el.emptyHint.textContent = "正在思考…";
+}
+
 function renderWelcomeHint(health: TurnSnapshot["health"]): void {
   const missing: string[] = [];
   if (!health.input) missing.push("输入层");
@@ -356,6 +371,8 @@ function toAvatarState(state: TurnSnapshot["state"]): AvatarState {
       return "emotion";
     case "degraded":
       return "degraded";
+    case "thinking":
+      return "thinking";
     default:
       return "default";
   }

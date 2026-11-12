@@ -69,7 +69,6 @@ async function viaProxy(invoke: TauriInvoke, req: HttpRequest): Promise<HttpResp
       body_base64: req.bodyBytes ? toBase64(req.bodyBytes) : null,
       headers: Object.entries(req.headers ?? {}),
       timeout_ms: req.timeoutMs ?? 30_000,
-      stream: false,
     },
   };
 
@@ -92,6 +91,130 @@ async function viaProxy(invoke: TauriInvoke, req: HttpRequest): Promise<HttpResp
     const kind = detail?.kind ?? "request";
     throw new TransportError(kind, detail?.message ?? String(error));
   }
+}
+
+/**
+ * 主进程流式代理：逐块接收 SSE。
+ *
+ * 与 `viaProxy` 的区别：那个等全部收完再返回，本函数每收到一行就回调，
+ * 因此首字延迟从"整轮耗时"降到"首包耗时"。
+ *
+ * 错误处理约定：
+ * - 建连失败 / 流中途出错 → 主进程通过 channel 发 `error` 块，这里抛 TransportError
+ * - HTTP >= 400 → 主进程发 `head` 时带 status，这里据此抛错
+ */
+async function viaProxyStream(
+  invoke: TauriInvoke,
+  req: HttpRequest,
+  onChunk: (chunk: string) => boolean | void,
+): Promise<void> {
+  // Tauri 2 的 Channel 构造函数挂在 __TAURI__.core 上
+  const tauri = (globalThis as {
+    __TAURI__?: { core?: { Channel?: new () => TauriChannel } };
+  }).__TAURI__;
+  const ChannelCtor = tauri?.core?.Channel;
+  if (!ChannelCtor) {
+    // 极端情况：运行时没有 Channel（旧版 Tauri）。
+    // 退回整包代理，保证功能不中断，但会失去流式体验。
+    const response = await viaProxy(invoke, { ...req, timeoutMs: req.timeoutMs ?? 120_000 });
+    if (response.status >= 400) {
+      throw new TransportError("http", `上游返回 ${response.status}`);
+    }
+    onChunk(response.body);
+    return;
+  }
+
+  const channel = new ChannelCtor();
+  let settled = false;
+  let failure: TransportError | null = null;
+  let httpStatus = 0;
+
+  // 用一个 promise 等流结束，避免 invoke 返回后立即 resolve
+  let resolveDone!: () => void;
+  const donePromise = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+
+  channel.onmessage = (message: unknown) => {
+    const chunk = message as StreamChunkMessage;
+    switch (chunk?.type) {
+      case "head":
+        httpStatus = chunk.status ?? 0;
+        break;
+      case "data":
+        if (httpStatus >= 400) {
+          // 错误体的正文也照常交给上层解析（便于提取 error.code）
+          onChunk(chunk.text ?? "");
+          break;
+        }
+        if (onChunk(chunk.text ?? "") === true) {
+          // 上层已收到终止帧：不再等待服务端关闭
+          if (!settled) {
+            settled = true;
+            resolveDone();
+          }
+        }
+        break;
+      case "done":
+        if (!settled) {
+          settled = true;
+          resolveDone();
+        }
+        break;
+      case "error":
+        failure = new TransportError(
+          chunk.kind === "timeout" ? "timeout" : chunk.kind === "unavailable" ? "unavailable" : "request",
+          chunk.message ?? "流式请求失败",
+        );
+        if (!settled) {
+          settled = true;
+          resolveDone();
+        }
+        break;
+      default:
+        break;
+    }
+  };
+
+  try {
+    await invoke("upstream_request_stream", {
+      request: {
+        url: req.url,
+        method: req.method,
+        body: req.body ?? null,
+        body_base64: null,
+        headers: Object.entries(req.headers ?? {}),
+        timeout_ms: req.timeoutMs ?? 120_000,
+      },
+      onEvent: channel,
+    });
+  } catch (error) {
+    const detail = error as { kind?: string; message?: string };
+    throw new TransportError(detail?.kind ?? "request", detail?.message ?? String(error));
+  }
+
+  await donePromise;
+
+  if (failure) throw failure;
+  if (httpStatus >= 400) {
+    throw new TransportError("http", `上游返回 ${httpStatus}`);
+  }
+}
+
+/** 主进程推来的流式块（与 Rust 侧 StreamChunk 对应）。 */
+interface StreamChunkMessage {
+  type: "head" | "data" | "done" | "error";
+  status?: number;
+  headers?: Array<[string, string]>;
+  text?: string;
+  elapsed_ms?: number;
+  kind?: string;
+  message?: string;
+}
+
+/** 前端 Channel 的最小形态（只用到 onmessage）。 */
+interface TauriChannel {
+  onmessage: (message: unknown) => void;
 }
 
 async function viaFetch(req: HttpRequest): Promise<HttpResponse> {
@@ -186,13 +309,14 @@ export async function requestStream(
 ): Promise<void> {
   const invoke = tauriInvoke();
   if (invoke) {
-    // 主进程一次性返回完整 SSE 文本：契约里帧很小，且回合结束才需要 final，
-    // 因此这里按整包接收再逐帧派发，UI 的流式体验由帧回调保证。
-    const response = await viaProxy(invoke, { ...req, timeoutMs: req.timeoutMs ?? 120_000 });
-    if (response.status >= 400) {
-      throw new TransportError("http", `上游返回 ${response.status}`);
-    }
-    onChunk(response.body);
+    // 桌面端：走主进程的真流式代理。
+    //
+    // 历史做法是 viaProxy 一次性取回完整 SSE 再整体派发——那意味着
+    // 从发请求到首字上屏之间界面完全静止（实测 ~2.5s，推理模型可达数十秒），
+    // 用户会以为程序卡死。
+    //
+    // 现在用 Tauri Channel 逐块接收，主进程每读到一行 SSE 就推一次。
+    await viaProxyStream(invoke, req, onChunk);
     return;
   }
 

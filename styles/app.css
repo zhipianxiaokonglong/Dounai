@@ -179,6 +179,17 @@ body {
   filter: grayscale(0.35);
 }
 
+/* 思考中：轻微呼吸，提示"在工作"而不是"卡住了"。
+   复用 default 的 breathe 动画（已存在关键帧），只调快节奏，不新增合成层。 */
+.avatar[data-state="thinking"] {
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+/* 思考中的文字提示：低调但可感知 */
+.panel__empty[data-thinking="true"] {
+  color: var(--accent);
+}
+
 .avatar--pulse {
   animation: pulse 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }

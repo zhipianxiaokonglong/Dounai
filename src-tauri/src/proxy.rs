@@ -38,9 +38,6 @@ pub struct ProxyRequest {
     /// 超时（毫秒），缺省 30s
     #[serde(default)]
     pub timeout_ms: Option<u64>,
-    /// 是否按 SSE 流式读取（返回逐行事件）
-    #[serde(default)]
-    pub stream: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -168,6 +165,155 @@ pub async fn upstream_request<R: Runtime>(
         headers,
         elapsed_ms: started.elapsed().as_millis(),
     })
+}
+
+/// 流式代理单块数据。
+///
+/// 用枚举而不是裸 String：前端需要区分"数据块"与"结束/错误"，
+/// 否则无法判断流是否正常收尾（SSE 连接可能被静默切断）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamChunk {
+    /// 响应头（首个事件，status + headers 只发一次）
+    Head {
+        status: u16,
+        headers: Vec<(String, String)>,
+    },
+    /// 数据块（原始字节以 UTF-8 文本呈现，SSE 本身是文本协议）
+    Data { text: String },
+    /// 正常结束
+    Done { elapsed_ms: u128 },
+    /// 出错（发生在流中途，而非建连阶段）
+    Error { kind: String, message: String },
+}
+
+/// 流式上游请求：边收边推，前端可逐块消费。
+///
+/// 与 `upstream_request` 的区别：
+/// - 非流式版本等全部收完再返回（适用于探活/CRUD）
+/// - 本函数用 `bytes_stream()` 逐块推送（适用于 SSE 对话）
+///
+/// 安全约束与 `upstream_request` 完全一致：只允许回环地址。
+#[tauri::command]
+pub async fn upstream_request_stream<R: Runtime>(
+    _app: AppHandle<R>,
+    request: ProxyRequest,
+    on_event: tauri::ipc::Channel<StreamChunk>,
+) -> Result<(), ProxyError> {
+    if !is_loopback_url(&request.url) {
+        return Err(ProxyError {
+            kind: "forbidden".into(),
+            message: "只允许访问本机回环地址".into(),
+        });
+    }
+
+    let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(60_000).min(MAX_TIMEOUT_MS));
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| ProxyError {
+            kind: "client".into(),
+            message: e.to_string(),
+        })?;
+
+    let method = request.method.to_uppercase();
+    let mut builder = match method.as_str() {
+        "GET" => client.get(&request.url),
+        "POST" => client.post(&request.url),
+        "PUT" => client.put(&request.url),
+        "DELETE" => client.delete(&request.url),
+        other => {
+            return Err(ProxyError {
+                kind: "method".into(),
+                message: format!("不支持的方法 {other}"),
+            })
+        }
+    };
+
+    for (key, value) in &request.headers {
+        builder = builder.header(key, value);
+    }
+    if let Some(encoded) = &request.body_base64 {
+        let bytes = BASE64_STANDARD.decode(encoded).map_err(|error| ProxyError {
+            kind: "encode".into(),
+            message: format!("二进制请求体解码失败：{error}"),
+        })?;
+        builder = builder.body(bytes);
+    } else if let Some(body) = &request.body {
+        builder = builder.body(body.clone());
+    }
+
+    let started = Instant::now();
+    let response = match builder.send().await {
+        Ok(resp) => resp,
+        Err(error) => {
+            let kind = if error.is_timeout() {
+                "timeout"
+            } else if error.is_connect() {
+                "unavailable"
+            } else {
+                "request"
+            };
+            // 建连失败也要通过 channel 告知，让前端统一处理
+            let _ = on_event.send(StreamChunk::Error {
+                kind: kind.to_string(),
+                message: error.to_string(),
+            });
+            return Ok(());
+        }
+    };
+
+    let status = response.status().as_u16();
+    let headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+
+    // 先发响应头，前端据此判断是否需要继续
+    let _ = on_event.send(StreamChunk::Head { status, headers });
+
+    // 逐块读取并推送。SSE 是 UTF-8 文本协议，但 TCP 分块可能切断多字节字符，
+    // 因此用跨块保留的缓冲区拼接，只在遇到完整行时才下发（见下方中文处理）。
+    use futures_util::StreamExt;
+    let mut stream = response.bytes_stream();
+    // 累积未成行的半截字节，避免 UTF-8 被切成两半
+    let mut pending: Vec<u8> = Vec::new();
+
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(bytes) => {
+                pending.extend_from_slice(&bytes);
+                // 只在换行处切分，保证每个 Data 块是完整行
+                while let Some(pos) = pending.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = pending.drain(..=pos).collect();
+                    let text = String::from_utf8_lossy(&line).to_string();
+                    if on_event.send(StreamChunk::Data { text }).is_err() {
+                        // 前端已取消订阅：提前结束，不再消耗流量
+                        return Ok(());
+                    }
+                }
+            }
+            Err(error) => {
+                let _ = on_event.send(StreamChunk::Error {
+                    kind: "stream".to_string(),
+                    message: error.to_string(),
+                });
+                return Ok(());
+            }
+        }
+    }
+
+    // 尾部残留（最后一行可能没有换行）
+    if !pending.is_empty() {
+        let text = String::from_utf8_lossy(&pending).to_string();
+        let _ = on_event.send(StreamChunk::Data { text });
+    }
+
+    let _ = on_event.send(StreamChunk::Done {
+        elapsed_ms: started.elapsed().as_millis(),
+    });
+    Ok(())
 }
 
 #[cfg(test)]

@@ -13,6 +13,18 @@ import {
   OutputAdapter,
 } from "../../src/upstream/adapters.js";
 import { Orchestrator, type TurnSnapshot } from "../../src/orchestrator/index.js";
+import { pickAvailableModel } from "./helpers.js";
+
+
+/**
+ * 动态探测可用模型。
+ *
+ * 原先把模型硬编码为 `echo:echo`，但 echo 是否可用取决于 OmniNexus 配置
+ * （`provider_disabled` 时不可用）。硬编码会让这批用例的结果依赖本机模型配置，
+ * 且失败信息是 503——容易被误读成"链路坏了"。
+ */
+let pickedModel: string | null = null;
+let pickReason = "";
 
 /** 一个确定不会有服务监听的端口 */
 const DEAD = "http://127.0.0.1:9";
@@ -43,6 +55,16 @@ beforeAll(async () => {
     );
   }
 }, 30_000);
+
+beforeAll(async () => {
+  // 这个文件每次用例都新建适配器（为了指向不同的死端口），所以探测时单独建一个
+  const pick = await pickAvailableModel(new LLMAdapter(LIVE.llm));
+  pickedModel = pick.model;
+  pickReason = pick.reason;
+  if (!pickedModel) {
+    console.warn(`[integration] 无可用模型，相关用例将跳过：${pickReason}`);
+  }
+});
 
 describe("单模块不可用", () => {
   it("input 不可用：进入 degraded，给出可读提示", async () => {
@@ -86,6 +108,12 @@ describe("单模块不可用", () => {
   }, 30_000);
 
   it("output 不可用：文本照常，只是没有语音", async () => {
+    if (!pickedModel) {
+      // 没有可用模型：跳过而非失败，并说明原因（见 helpers.ts）
+      console.warn(`[integration] 跳过「output 不可用：文本照常，只是没有语音」：${pickReason}`);
+      return;
+    }
+
     // 需要真实 input + llm：文本来自 llm 的 final，与 output 无关，
     // 这正是本用例要证明的独立性。
     if (!live.input || !live.llm) return;
@@ -101,7 +129,7 @@ describe("单模块不可用", () => {
 
     const snapshot = await orchestrator.submit(
       { kind: "text", text: "今天有点累" },
-      { model: "echo:echo" },
+      { model: pickedModel! },
     );
     // 文本必须完整保留——这是「output 挂掉不影响对话」的核心断言
     expect(snapshot.text.length).toBeGreaterThan(0);
@@ -162,7 +190,7 @@ describe("快照契约", () => {
       { onSnapshot: (snapshot) => snapshots.push(snapshot) },
     );
 
-    await orchestrator.submit({ kind: "text", text: "你好" }, { model: "echo:echo" });
+    await orchestrator.submit({ kind: "text", text: "你好" }, { model: pickedModel! });
 
     expect(snapshots.length).toBeGreaterThan(1);
     // 每个快照必须是独立对象，避免 UI 侧读到后续变更

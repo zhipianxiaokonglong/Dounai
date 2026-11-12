@@ -11,7 +11,14 @@
  * 其余代码零改动。
  */
 
-export type AvatarState = "default" | "wakeup" | "talking" | "emotion" | "degraded";
+export type AvatarState =
+  | "default"
+  | "wakeup"
+  | "talking"
+  | "emotion"
+  | "degraded"
+  /** 已发出请求、尚未收到任何内容（等待首包）。 */
+  | "thinking";
 
 export interface AvatarTheme {
   /** 主色（形象与文字强调共用） */

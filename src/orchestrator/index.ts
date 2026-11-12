@@ -20,7 +20,22 @@ import {
 /** 构造后的内部标记：本轮是否由声纹唤醒触发 */
 const WAKE_FLAG = Symbol("wake");
 
-export type UiState = "default" | "wakeup" | "talking" | "emotion" | "degraded";
+export type UiState =
+  | "default"
+  | "wakeup"
+  | "talking"
+  | "emotion"
+  | "degraded"
+  /**
+   * 已发出请求、尚未收到任何内容。
+   *
+   * 存在的理由：桌面端代理当前是整包缓冲（`transport.ts` 的 `stream: false`），
+   * 从请求到首个 delta 之间界面完全静止。实测一轮 ~2.5s，
+   * 推理模型可能 10-30s——用户会以为程序崩了。
+   *
+   * 即使将来实现真流式，首 token 本身仍有延迟，这个状态长期有效。
+   */
+  | "thinking";
 
 export interface ModuleHealth {
   input: boolean;
@@ -366,6 +381,12 @@ export class Orchestrator {
     // 局部常量：图像输入时就排队记忆；是否可用随计划返回
     let streamed = "";
     let finalEvent: LLMEvent;
+
+    // 进入「思考中」：请求即将发出，到首个 delta 之间界面会完全静止。
+    // 桌面端代理是整包缓冲，这段等待可达数秒，必须给用户明确反馈。
+    // 放在能力预检之后——预检失败已直接返回，不该显示"在等工作"。
+    this.patch({ state: "thinking" });
+
     try {
       finalEvent = await this.adapters.llm.runTurn(
         {

@@ -5,7 +5,7 @@
  * 验证契约在真实网络、真实序列化下的表现。
  *
  * 运行前提（见 tests/integration/README.md）：
- *   input :8101 / OmniNexus :8102（启用 echo 模型）/ output :8103
+ *   input :8101 / OmniNexus :8102（需至少一个 available 模型）/ output :8103
  * 未启动时自动跳过，不阻塞常规单测。
  */
 
@@ -17,6 +17,7 @@ import {
   resolveAudioUrl,
 } from "../../src/upstream/adapters.js";
 import { Orchestrator, type TurnSnapshot } from "../../src/orchestrator/index.js";
+import { pickAvailableModel } from "./helpers.js";
 import type { LLMEvent } from "../../src/contracts/index.js";
 
 const ENDPOINTS = {
@@ -27,6 +28,10 @@ const ENDPOINTS = {
 
 const input = new InputAdapter(ENDPOINTS.input);
 const llm = new LLMAdapter(ENDPOINTS.llm);
+
+/** 动态探测的可用模型（不再硬编码 echo）。 */
+let pickedModel: string | null = null;
+let pickReason = '';
 const output = new OutputAdapter(ENDPOINTS.output);
 
 let available = { input: false, llm: false, output: false };
@@ -43,6 +48,15 @@ beforeAll(async () => {
 
 afterAll(() => {
   // 无资源需要释放；保留钩子以便未来清理临时音频
+});
+
+beforeAll(async () => {
+  const pick = await pickAvailableModel(llm);
+  pickedModel = pick.model;
+  pickReason = pick.reason;
+  if (!pickedModel) {
+    console.warn(`[integration] 无可用模型，相关用例将跳过：${pickReason}`);
+  }
 });
 
 describe("input 契约", () => {
@@ -67,13 +81,18 @@ describe("input 契约", () => {
 
 describe("OmniNexus SSE 契约", () => {
   it("完整回合按 meta → route → delta → final 顺序产出", async () => {
+    if (!pickedModel) {
+      console.warn(`[integration] 无可用模型，相关用例将跳过：${pickReason}`);
+      return;
+    }
+
     if (!available.llm) return;
 
     const order: string[] = [];
     const deltas: LLMEvent[] = [];
 
     const final = await llm.runTurn(
-      { eventId: crypto.randomUUID(), parts: [{ modality: "text", content: "用一句话打个招呼" }], model: "echo:echo" },
+      { eventId: crypto.randomUUID(), parts: [{ modality: "text", content: "用一句话打个招呼" }], model: pickedModel! },
       {
         onMeta: () => order.push("meta"),
         onRoute: () => order.push("route"),
@@ -103,10 +122,15 @@ describe("OmniNexus SSE 契约", () => {
   }, 60_000);
 
   it("同一 event_id 重投返回同一输出事件（幂等）", async () => {
+    if (!pickedModel) {
+      console.warn(`[integration] 无可用模型，相关用例将跳过：${pickReason}`);
+      return;
+    }
+
     if (!available.llm) return;
     const eventId = crypto.randomUUID();
-    const first = await llm.runTurn({ eventId, parts: [{ modality: "text", content: "幂等测试" }], model: "echo:echo" }, {});
-    const second = await llm.runTurn({ eventId, parts: [{ modality: "text", content: "幂等测试" }], model: "echo:echo" }, {});
+    const first = await llm.runTurn({ eventId, parts: [{ modality: "text", content: "幂等测试" }], model: pickedModel! }, {});
+    const second = await llm.runTurn({ eventId, parts: [{ modality: "text", content: "幂等测试" }], model: pickedModel! }, {});
     expect(second.event_id).toBe(first.event_id);
   }, 90_000);
 });
@@ -155,6 +179,11 @@ describe("output 契约", () => {
 
 describe("全链路：input → OmniNexus → output", () => {
   it("一次完整对话产出文本与音频，且标签来自 final", async () => {
+    if (!pickedModel) {
+      console.warn(`[integration] 无可用模型，相关用例将跳过：${pickReason}`);
+      return;
+    }
+
     if (!available.input || !available.llm || !available.output) return;
 
     const snapshots: TurnSnapshot[] = [];
@@ -167,7 +196,7 @@ describe("全链路：input → OmniNexus → output", () => {
     expect(health).toEqual({ input: true, llm: true, output: true });
 
     const snapshot = await orchestrator.submit("今天有点累，想找人说说话。", {
-      model: "echo:echo",
+      model: pickedModel!,
     });
 
     expect(snapshot.text.length).toBeGreaterThan(0);

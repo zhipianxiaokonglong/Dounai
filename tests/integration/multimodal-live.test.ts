@@ -8,12 +8,24 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { InputAdapter, LLMAdapter, OutputAdapter } from "../../src/upstream/adapters.js";
 import { Orchestrator } from "../../src/orchestrator/index.js";
+import { pickAvailableModel } from "./helpers.js";
 
 const LIVE = {
   input: process.env.DOUNAI_INPUT_URL ?? "http://127.0.0.1:8101",
   llm: process.env.DOUNAI_LLM_URL ?? "http://127.0.0.1:8102",
   output: process.env.DOUNAI_OUTPUT_URL ?? "http://127.0.0.1:8103",
 };
+
+
+/**
+ * 动态探测可用模型。
+ *
+ * 原先把模型硬编码为 `echo:echo`，但 echo 是否可用取决于 OmniNexus 配置
+ * （`provider_disabled` 时不可用）。硬编码会让这批用例的结果依赖本机模型配置，
+ * 且失败信息是 503——容易被误读成"链路坏了"。
+ */
+let pickedModel: string | null = null;
+let pickReason = "";
 
 const input = new InputAdapter(LIVE.input);
 const llm = new LLMAdapter(LIVE.llm);
@@ -65,6 +77,15 @@ function tinyWav(): Uint8Array {
   return buffer;
 }
 
+beforeAll(async () => {
+  const pick = await pickAvailableModel(llm);
+  pickedModel = pick.model;
+  pickReason = pick.reason;
+  if (!pickedModel) {
+    console.warn(`[integration] 无可用模型，相关用例将跳过：${pickReason}`);
+  }
+});
+
 describe("真实输入层：图像输入", () => {
   it("上传 PNG 得到 modality=image 的事件，content 为受控媒体 URL", async () => {
     if (!live.input) return;
@@ -112,6 +133,11 @@ describe("真实输入层：语音输入", () => {
 
 describe("真实模型层：提示词接口", () => {
   it("能列出内置提示词配置", async () => {
+    if (!pickedModel) {
+      console.warn(`[integration] 跳过「能列出内置提示词配置」：${pickReason}`);
+      return;
+    }
+
     if (!live.llm) return;
 
     const profiles = await llm.listPromptProfiles();
@@ -120,13 +146,18 @@ describe("真实模型层：提示词接口", () => {
   }, 30_000);
 
   it("按轮覆盖 prompt_profile 不报错（未知 ID 由上游判定）", async () => {
+    if (!pickedModel) {
+      console.warn(`[integration] 跳过「按轮覆盖 prompt_profile 不报错（未知 ID 由上游判定）」：${pickReason}`);
+      return;
+    }
+
     if (!live.llm) return;
 
     const final = await llm.runTurn(
       {
         eventId: crypto.randomUUID(),
         parts: [{ modality: "text", content: "你好" }],
-        model: "echo:echo",
+        model: pickedModel!,
         promptProfile: "default",
       },
       {},
@@ -137,6 +168,11 @@ describe("真实模型层：提示词接口", () => {
 
 describe("真实全链路：图像输入", () => {
   it("图像事件也能走通 input → 模型 → 语音", async () => {
+    if (!pickedModel) {
+      console.warn(`[integration] 跳过「图像事件也能走通 input → 模型 → 语音」：${pickReason}`);
+      return;
+    }
+
     if (!live.input || !live.llm || !live.output) return;
 
     const orchestrator = new Orchestrator(
@@ -146,7 +182,7 @@ describe("真实全链路：图像输入", () => {
 
     const snapshot = await orchestrator.submit(
       { kind: "image", bytes: tinyPng(), filename: "probe.png", mime: "image/png" },
-      { model: "echo:echo" },
+      { model: pickedModel! },
     );
 
     expect(snapshot.modality).toBe("image");

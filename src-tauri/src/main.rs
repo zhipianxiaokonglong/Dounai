@@ -84,6 +84,7 @@ fn main() {
             quit_app,
             admin::open_module_admin,
             proxy::upstream_request,
+            proxy::upstream_request_stream,
         ])
         .run(tauri::generate_context!());
 
