@@ -75,6 +75,13 @@ html,
 body {
   margin: 0;
   padding: 0;
+  /* 关键：必须给确定高度，否则子元素的 height:100% 失去参照。
+   *
+   * 缺这一条的实测症状：`.pet { height: 100% }` 退化成「内容高度」(300px)，
+   * 于是 `justify-content: flex-end` 失效，本该在右下角的形象层跑到了窗口顶部。
+   * 用户看到的就是「右下角图标不见了」（其实渲染正常，只是位置错了）。
+   */
+  height: 100%;
   background: transparent;
   overflow: hidden;
   /* 悬浮窗不应出现滚动条或选中 */
@@ -86,6 +93,7 @@ body {
 .pet {
   position: relative;
   width: 100%;
+  /* 依赖 html/body 的 height:100%；若父级无确定高度会退化成内容高度 */
   height: 100%;
   display: flex;
   flex-direction: column;

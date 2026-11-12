@@ -268,7 +268,15 @@ fn probe_writable(dir: &std::path::Path) -> bool {
             let _ = std::fs::remove_file(&probe);
             true
         }
-        Err(_) => false,
+        Err(e) => {
+            log_startup(&format!(
+                "  探针写入失败 {}: kind={:?} raw={:?}",
+                probe.display(),
+                e.kind(),
+                e.raw_os_error()
+            ));
+            false
+        }
     }
 }
 
