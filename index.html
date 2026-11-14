@@ -46,6 +46,10 @@
         <!-- 管理入口：直接用系统浏览器打开对应模块的自带管理界面。
              本窗口不承载管理界面（它是 360×420 的常驻小窗），也不保存密钥。 -->
         <div class="panel__layers" id="layer-admin">
+          <select id="output-select" class="panel__select panel__select--output"
+                  title="语音输出设备" aria-label="语音输出设备">
+            <option value="">默认输出</option>
+          </select>
           <button class="panel__admin-btn" id="btn-admin-input">输入层管理</button>
           <button class="panel__admin-btn" id="btn-admin-llm">模型层管理</button>
           <button class="panel__admin-btn" id="btn-admin-output">语音层管理</button>
@@ -60,6 +64,9 @@
 
         <!-- 三路输入：文字 / 图像 / 语音（对应结构图的三个输入入口） -->
         <form id="composer" class="panel__composer">
+          <button id="btn-replay" class="tool-btn" type="button" hidden title="播放语音" aria-label="播放语音">
+            🔊
+          </button>
           <button id="btn-image" class="tool-btn" type="button" title="发送图片" aria-label="发送图片">
             🖼
           </button>

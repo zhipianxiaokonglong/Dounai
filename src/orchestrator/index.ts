@@ -398,10 +398,9 @@ export class Orchestrator {
         },
         {
           onDelta: (event) => {
-            // 同一帧可能被上游重放；用「更长者为准」避免文本回退
-            if (event.content.length >= streamed.length || streamed.length === 0) {
-              streamed = event.content;
-            }
+            // 契约规定 delta.content 是**增量片段**（不是累计全文），
+            // 必须追加而不是比较长度覆盖；final 到达后再用完整文本校正。
+            streamed += event.content;
             this.patch({ state: "talking", text: streamed });
           },
           onFinal: (event) => {
@@ -499,11 +498,16 @@ export class Orchestrator {
     const audioUrl =
       output.status === "synthesized" ? this.adapters.output.audioUrl(output.audio_ref) : null;
     const degraded = output.degraded || output.status === "text_fallback";
+    // 渲染类型以语音层为准，但语音层把不认识的 table/json/mixed 回落成 text。
+    // 这种情况下保留模型层给出的更具体类型，避免表格/JSON 被降成纯文本。
+    const renderType = output.render.type;
+    const contentType =
+      renderType && renderType !== "text" ? renderType : this.snapshot.contentType;
     this.patch({
       text: output.text || this.snapshot.text,
       // 情感标签以 LLM 的 final 为准（见 docs/contracts.md §2.1）；
       // output 的 style.emotion 只是它自己的映射结果，不覆盖上游标签。
-      contentType: output.render.type || this.snapshot.contentType,
+      contentType,
       audioUrl,
       degraded,
       notice: degraded ? "语音暂不可用，本条只显示文字。" : null,

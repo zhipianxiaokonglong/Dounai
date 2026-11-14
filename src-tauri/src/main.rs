@@ -20,7 +20,7 @@ mod admin;
 mod proxy;
 
 const WIN_W: f64 = 360.0;
-const WIN_H: f64 = 420.0;
+const WIN_H: f64 = 500.0;
 /// 距离屏幕边缘多少像素内触发吸附
 const SNAP_THRESHOLD: i32 = 24;
 

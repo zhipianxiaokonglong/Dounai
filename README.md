@@ -3,7 +3,7 @@
 > 一款开源的 AI 情感助手——为孤独而有技术能力的你，提供有温度、且真正属于你自己的智能陪伴。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-190%2B%20passed-brightgreen)](docs/TEST_REPORT.md)
+[![Tests](https://img.shields.io/badge/tests-187%20passed-brightgreen)](docs/TEST_REPORT.md)
 ![Status](https://img.shields.io/badge/status-开发中-orange)
 
 **本仓库是 Dounai 的「组装层 + 桌面悬浮窗」**：它把输入层、模型层、语音层三个独立模块
@@ -127,6 +127,10 @@ Dounai 是模块化产品，各模块独立运行、独立测试，且各自独�
 
 语音的转写文本会优先作为模型输入；`voiceprint_event == "wakeup"` 直接驱动唤醒态。
 
+> 图像上限是分层防御：输入层接收 15 MB；模型层单个内容分区约 9 MB；
+> 悬浮窗为 base64 与 metadata 预留余量，按约 7.5 MB 提前提示。
+> 因此“输入层能收 15 MB”不等于“悬浮窗会发送 15 MB”。
+
 ### 提示词切换
 
 面板顶部可切换提示词配置（数据来自模型层 `GET /v1/prompts/profiles`）。
@@ -249,7 +253,7 @@ npm run dev          # 开发模式：Vite 代理自动转发到三个上游
 ```powershell
 npm run build                                  # 产出 dist/（前端资源）
 npx tauri build --no-bundle                    # 把 dist 嵌入 exe
-# 产物：src-tauri/target/release/dounai.exe  ≈ 7.9 MB
+# 产物：src-tauri/target/release/dounai.exe  ≈ 8.04 MB
 ```
 
 > ⚠️ **不要只用 `cargo build`**：那只会编译 Rust 壳，**不会把 `dist/` 嵌进去**，
@@ -357,7 +361,7 @@ data: {"event_id":"…","session_id":"…","content":"完整文本","stream":fal
 | 项 | 选择 | 理由 |
 |---|---|---|
 | 桌面框架 | **Tauri 2** | 单文件 7.94MB，对比 Electron 215MB（约 27 倍）；常驻内存更小 |
-| 前端 | 原生 TypeScript + Vite | 无框架，产物仅 38.6KB，启动开销低 |
+| 前端 | 原生 TypeScript + Vite | 无框架，产物仅 43.0KB，启动开销低 |
 | 形象渲染 | 可替换接口 + 默认 SVG | 与编排解耦，为正式形象预留 |
 | 上游通信 | 主进程代理 | 绕开 CORS 且**不削弱**上游安全策略（见 [`docs/cors-and-proxy.md`](docs/cors-and-proxy.md)） |
 
@@ -368,22 +372,23 @@ data: {"event_id":"…","session_id":"…","content":"完整文本","stream":fal
 ## 🧪 测试
 
 ```powershell
-npm test           # 97 个用例（契约 / 编排 / SSE / 多模态 / 环境探测 / 全链路 / 降级）
+npm test           # 173 个用例（契约 / 编排 / SSE / 多模态 / 环境探测 / 全链路 / 降级）
 npm run typecheck  # 类型检查
-cargo test --release --manifest-path src-tauri/Cargo.toml   # 12 个 Rust 单测
+cargo test --release --manifest-path src-tauri/Cargo.toml   # 14 个 Rust 单测
 ```
 
 | 套件 | 用例 | 覆盖内容 |
 |---|---|---|
 | `contracts` | 21 | 三个上游契约解析、前向兼容、坏数据 |
-| `orchestrator` | 22 | 状态机、事件归并、幂等、降级、多模态、唤醒态 |
+| `orchestrator` | 24 | 状态机、事件归并、增量流式累积、幂等、降级、多模态、唤醒态 |
 | `multimodal` | 11 | multipart 构造、图像/语音上传、提示词接口 |
 | `sse` | 13 | 分帧、keep-alive、坏帧容错、失败序列 |
 | `transport-mode` | 10 | **Tauri 2 环境探测**（防止桌面端退回浏览器直连） |
 | `multimodal-live` | 6 | **真实上游**的图像/语音上传与提示词覆盖 |
 | `full-chain` | 8 | **真实三模块**串完整链路（含音频可下载校验） |
 | `degradation` | 6 | 指向死端口的真实降级 |
-| Rust 单测 | 12 | 回环白名单、吸附几何（四角/阈值/双屏偏移） |
+| 回归/修复套件 | 74 | 契约回归、错误码映射、模型下拉/能力、Issue 修复 |
+| Rust 单测 | 14 | 回环白名单、吸附几何（四角/阈值/双屏偏移）、模块管理 |
 
 集成测试用**真实上游**，未启动时会明确打印跳过原因，不会误报失败。
 

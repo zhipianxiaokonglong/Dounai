@@ -19,15 +19,16 @@
 | 套件 | 用例数 | 结果 | 说明 |
 |---|---|---|---|
 | `tests/contracts.test.ts` | 21 | ✅ 通过 | 三个上游的事件契约解析、前向兼容、坏数据 |
-| `tests/orchestrator.test.ts` | 22 | ✅ 通过 | 状态机、事件归并、幂等、降级、多模态、唤醒态 |
+| `tests/orchestrator.test.ts` | 24 | ✅ 通过 | 状态机、事件归并、增量流式累积、幂等、降级、多模态、唤醒态 |
 | `tests/multimodal.test.ts` | 11 | ✅ 通过 | multipart 构造、图像/语音上传报文、提示词接口 |
 | `tests/sse.test.ts` | 13 | ✅ 通过 | SSE 分帧、keep-alive、坏帧、失败序列 |
 | `tests/transport-mode.test.ts` | 10 | ✅ 通过 | **Tauri 2 环境探测**（防「桌面端退回直连」回归，见 §6.6） |
 | `tests/integration/multimodal-live.test.ts` | 6 | ✅ 通过 | **真实上游**的图像/语音上传与提示词覆盖 |
 | `tests/integration/full-chain.test.ts` | 8 | ✅ 通过 | **真实三模块**全链路 |
 | `tests/integration/degradation.test.ts` | 6 | ✅ 通过 | 指向死端口的真实降级 |
-| `src-tauri` Rust 单测 | 12 | ✅ 通过 | 回环白名单、吸附几何（左右上下四角/阈值/双屏偏移） |
-| **合计** | **109** | **✅ 全部通过** | JS/TS 97 + Rust 12 |
+| 回归/修复套件 | 74 | ✅ 通过 | 契约回归、错误码映射、模型下拉/能力、Issue 修复 |
+| `src-tauri` Rust 单测 | 14 | ✅ 通过 | 回环白名单、吸附几何（左右上下四角/阈值/双屏偏移）、模块管理 |
+| **合计** | **187** | **✅ 全部通过** | JS/TS 173 + Rust 14 |
 
 浏览器端另有 CDP 驱动的端到端验证（见 §4），不纳入自动化计数，因为需要真实上游在线。
 
@@ -248,7 +249,7 @@ snapshot.degraded === true ✅   （UI 会显示「语音不可用」徽标）
 | 克隆 4 个仓库 | ✅ Dounai 48 / Dounai_input 72 / OmniNexus 79 / MoodVoice 56 文件 |
 | 三个 Python venv + 依赖安装 | ✅ 各自 README 的安装命令均成功 |
 | 上游启动 | ✅ 8101 / 8102 / 8103 全部健康 |
-| `npm install` + `typecheck` + `build` | ✅ 0 错误，dist 38.6KB |
+| `npm install` + `typecheck` + `build` | ✅ 0 错误，dist 43.0KB |
 | `npm test`（上游在线） | ✅ **87 项全过，零跳过** |
 | `npx tauri build --no-bundle` | ✅ 产出 7.95MB exe |
 

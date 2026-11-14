@@ -126,6 +126,37 @@ describe("Orchestrator 正常链路", () => {
     expect(snapshot.modality).toBe("text");
   });
 
+  it("流式 delta 按增量累积，短片段不会覆盖已有文本", async () => {
+    const { orchestrator, snapshots } = makeOrchestrator({
+      llm: {
+        runTurn: vi.fn().mockImplementation(async (_req, callbacks) => {
+          callbacks.onDelta?.(makeLLMEvent({ stream: true, content: "我在" }));
+          callbacks.onDelta?.(makeLLMEvent({ stream: true, content: "呢" }));
+          return makeLLMEvent({ content: "我在呢，慢慢说。" });
+        }),
+      } as Partial<LLMAdapter>,
+    });
+
+    const snapshot = await orchestrator.submit("hi");
+    const talkingTexts = snapshots.filter((s) => s.state === "talking").map((s) => s.text);
+
+    expect(talkingTexts).toContain("我在呢");
+    expect(snapshot.text).toBe("我在呢，慢慢说。");
+  });
+
+  it("语音层把 table 回落为 text 时保留模型层的表格类型", async () => {
+    const { orchestrator } = makeOrchestrator({
+      llm: {
+        runTurn: vi.fn().mockResolvedValue(
+          makeLLMEvent({ tags: { emotion: "neutral", type: "table", intent: "reply" } }),
+        ),
+      } as Partial<LLMAdapter>,
+    });
+
+    const snapshot = await orchestrator.submit("hi");
+    expect(snapshot.contentType).toBe("table");
+  });
+
   it("图像输入走 submitImage 并在快照里标记模态", async () => {
     const { orchestrator, input } = makeOrchestrator({
       input: {

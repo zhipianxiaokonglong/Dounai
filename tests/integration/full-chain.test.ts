@@ -244,7 +244,13 @@ describe("全链路：input → OmniNexus → output", () => {
     expect(response.ok).toBe(true);
     const bytes = new Uint8Array(await response.arrayBuffer());
     expect(bytes.byteLength).toBeGreaterThan(1000);
-    // MP3 帧同步头 0xFF 0xEx
-    expect(bytes[0]).toBe(0xff);
+    // 厂商可以是 MP3（edge/OpenAI）、WAV（DeepSeek/Azure）或 Ogg；
+    // 这里只校验容器魔数，避免把“换了 TTS 厂商”误判成链路失败。
+    const isMp3 = bytes[0] === 0xff;
+    const isWav =
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46;
+    const isOgg =
+      bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53;
+    expect(isMp3 || isWav || isOgg).toBe(true);
   }, 180_000);
 });

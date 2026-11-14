@@ -92,6 +92,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * 健康探针的契约 major 版本校验。
+ *
+ * 没有版本字段时保持旧行为（只看 HTTP 状态）；有版本但 major 不匹配时
+ * 判为不可用，避免上游 breaking change 被静默当成正常。
+ */
+function contractMajorOk(raw: unknown, expected: number): boolean {
+  if (!isRecord(raw)) return true;
+  const version = raw.contract_version;
+  if (typeof version !== "string") return true;
+  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
+  return !Number.isFinite(major) || major === expected;
+}
+
 /** 把相对 audio_ref 拼成可播放的绝对地址。 */
 export function resolveAudioUrl(outputBase: string, audioRef: string | null): string | null {
   if (!audioRef) return null;
@@ -143,7 +157,12 @@ export class InputAdapter {
         method: "GET",
         timeoutMs: TIMEOUTS.probe,
       });
-      return res.status >= 200 && res.status < 400;
+      if (res.status < 200 || res.status >= 400) return false;
+      try {
+        return contractMajorOk(await readJson(res), 1);
+      } catch {
+        return true;
+      }
     } catch {
       return false;
     }
@@ -300,7 +319,12 @@ export class LLMAdapter {
         method: "GET",
         timeoutMs: TIMEOUTS.probe,
       });
-      return res.status >= 200 && res.status < 400;
+      if (res.status < 200 || res.status >= 400) return false;
+      try {
+        return contractMajorOk(await readJson(res), 1);
+      } catch {
+        return true;
+      }
     } catch {
       return false;
     }
@@ -540,7 +564,12 @@ export class OutputAdapter {
         method: "GET",
         timeoutMs: TIMEOUTS.probe,
       });
-      return res.status >= 200 && res.status < 400;
+      if (res.status < 200 || res.status >= 400) return false;
+      try {
+        return contractMajorOk(await readJson(res), 1);
+      } catch {
+        return true;
+      }
     } catch {
       return false;
     }
@@ -699,6 +728,12 @@ export function userFacingError(error: unknown): string {
       case "empty_audio":
       case "invalid_response":
         return "语音合成异常，本条先只显示文字。";
+      case "provider_error":
+      case "http_error":
+      case "edge_tts_error":
+        return "语音厂商调用失败，本条先只显示文字。";
+      case "key_store_unavailable":
+        return "语音层的系统凭据库不可用，密钥只在本次会话内有效。";
 
       /* --- 输入层（小写码，此前全部未映射）--- */
       case "payload_too_large":

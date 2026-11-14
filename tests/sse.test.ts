@@ -99,7 +99,7 @@ describe("LLMAdapter SSE 解析", () => {
       frame("meta", { event_id: "e1", session_id: "s1", planned_model: "echo:echo" }),
       frame("route", { provider: "echo", model: "echo:echo", fallback: false }),
       frame("delta", deltaPayload("我在")),
-      frame("delta", deltaPayload("我在呢")),
+      frame("delta", deltaPayload("呢")),
       frame("final", finalPayload("我在呢，慢慢说。")),
     ]);
 

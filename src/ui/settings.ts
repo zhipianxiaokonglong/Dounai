@@ -17,6 +17,8 @@ export interface DounaiSettings {
   model: string;
   /** 提示词配置 id；留空表示用模型层默认（空字符串是合法值） */
   promptProfile: string;
+  /** 语音输出设备 id；空字符串表示系统默认输出 */
+  outputDevice: string;
   theme: {
     accent: string;
     surface: string;
@@ -38,6 +40,7 @@ export const DEFAULT_SETTINGS: DounaiSettings = {
   avatarRenderer: "logo",
   model: "",
   promptProfile: "",
+  outputDevice: "",
   theme: {
     accent: "#5b8def",
     surface: "#ffffff",
