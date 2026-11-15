@@ -25,7 +25,7 @@ export default defineConfig({
     target: "es2022",
     sourcemap: false,
     rollupOptions: {
-      input: { main: "index.html" },
+      input: { main: "index.html", settings: "settings.html" },
     },
   },
   server: {

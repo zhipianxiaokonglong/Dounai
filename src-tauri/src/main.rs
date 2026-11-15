@@ -50,8 +50,11 @@ fn main() {
     // 两个一模一样的 Dounai 图标，其中一个属于「后来的、没抢到焦点」的实例，
     // 看起来就是「一个能点、一个不能点」。这是本次用户反馈的直接原因。
     let result = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             use tauri::Manager;
+            if argv.iter().any(|arg| arg == "--settings") {
+                let _ = open_settings_window(app);
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -73,6 +76,10 @@ fn main() {
             // 窗口以 visible(false) 建出，是为了等位置算好再显示，避免在默认位置闪一下。
             place_bottom_right(&window);
             let _ = window.show();
+            // 便于脚本/快捷方式直接打开设置；托盘「设置」是主入口。
+            if std::env::args().any(|arg| arg == "--settings") {
+                let _ = open_settings_window(app.handle());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -456,10 +463,11 @@ fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
     let dnd = MenuItem::with_id(app, "dnd", "勿扰模式", true, None::<&str>)?;
     let top = MenuItem::with_id(app, "top", "窗口置顶", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 Dounai", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
 
-    let menu = Menu::with_items(app, &[&toggle, &dnd, &top, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&toggle, &dnd, &top, &settings, &sep, &quit])?;
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().unwrap_or_else(|| {
@@ -473,6 +481,9 @@ fn build_tray<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             "toggle" => toggle_window(app),
             "dnd" => toggle_dnd(app),
             "top" => toggle_on_top(app),
+            "settings" => {
+                let _ = open_settings_window(app);
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -505,6 +516,38 @@ fn toggle_window<R: Runtime>(app: &AppHandle<R>) {
             let _ = app.emit("dounai://wake", ());
         }
     }
+}
+
+/// 独立设置窗口：模块入口、音频输出、勿扰与置顶。
+///
+/// 关闭窗口即销毁；下次从托盘「设置」重新创建。与主窗口共用 WebView2
+/// 数据目录，才能读到同一份 localStorage（端点、音量、输出设备）。
+fn open_settings_window<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::App("settings.html".into()),
+    );
+    if let Some(dir) = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER") {
+        builder = builder.data_directory(std::path::PathBuf::from(dir));
+    }
+    builder
+        .title("Dounai 设置")
+        .inner_size(680.0, 720.0)
+        .min_inner_size(560.0, 600.0)
+        .center()
+        .resizable(true)
+        .always_on_top(false)
+        .skip_taskbar(false)
+        .visible(true)
+        .build()?;
+    Ok(())
 }
 
 fn toggle_dnd<R: Runtime>(app: &AppHandle<R>) {

@@ -20,9 +20,9 @@ import { LogoAvatarRenderer } from "../avatar/renderers/logo.js";
 import { loadSettings, saveSettings } from "./settings.js";
 import { resolvePromptProfileId, type ModelEntry } from "../contracts/index.js";
 import {
+  listenAppEvent,
   mountTrayBridge,
   notifyPanelVisibility,
-  openModuleAdmin,
 } from "./bridge.js";
 import { detectRuntime, resolveEndpoints } from "./runtime.js";
 
@@ -46,17 +46,12 @@ const el = {
   voice: must<HTMLAudioElement>("voice"),
   modelHint: must<HTMLElement>("model-hint"),
   modelSelect: must<HTMLSelectElement>("model-select"),
-  layerStatus: must<HTMLElement>("layer-status"),
-  adminInput: document.getElementById("btn-admin-input") as HTMLButtonElement | null,
-  adminLlm: document.getElementById("btn-admin-llm") as HTMLButtonElement | null,
-  adminOutput: document.getElementById("btn-admin-output") as HTMLButtonElement | null,
   // 结构图要求的三路输入入口 + 提示词切换入口
   btnImage: must<HTMLButtonElement>("btn-image"),
   btnVoice: must<HTMLButtonElement>("btn-voice"),
   btnReplay: must<HTMLButtonElement>("btn-replay"),
   filePicker: must<HTMLInputElement>("file-picker"),
   promptSelect: must<HTMLSelectElement>("prompt-select"),
-  outputSelect: must<HTMLSelectElement>("output-select"),
 };
 
 function must<T extends HTMLElement>(id: string): T {
@@ -84,6 +79,8 @@ let busy = false;
 let currentPromptProfile = settings.promptProfile ?? "";
 /** 当前语音输出设备 ID（空字符串 = 系统默认输出） */
 let currentOutputDevice = settings.outputDevice ?? "";
+/** 当前语音音量 0..1 */
+let currentVolume = settings.audioVolume ?? 1;
 /** 模型清单缓存（供发图前能力检查） */
 let knownModels: ModelEntry[] = [];
 
@@ -171,7 +168,6 @@ function render(snapshot: TurnSnapshot, text: string): void {
   renderBadge(snapshot);
   renderWelcomeHint(snapshot.health);
   renderThinkingHint(snapshot);
-  renderLayerStatus(snapshot);
   renderStream(snapshot, text);
   renderNotice(snapshot);
   renderControls(snapshot);
@@ -299,53 +295,6 @@ function renderStream(snapshot: TurnSnapshot, text: string): void {
  * 密钥由启动器的「厂商」页写入，启动模块时以环境变量注入上游，
  * 悬浮窗这一侧根本拿不到密钥（见 launcher 的 vendor_keys 设计）。
  */
-/**
- * 打开某层模块的管理界面（系统浏览器）。
- *
- * 打不开时给出可执行的下一步，而不是只说"失败"。
- */
-async function openAdminFor(moduleId: string): Promise<void> {
-  try {
-    await openModuleAdmin(moduleId);
-    el.notice.textContent = `已在浏览器打开 ${moduleId} 的管理界面。`;
-  } catch (error) {
-    const message = error instanceof Error && error.message ? error.message : String(error);
-    el.notice.textContent =
-      `打不开 ${moduleId} 的管理界面：${message}。请先用启动器启动该模块。`;
-  }
-}
-
-function renderLayerStatus(snapshot: TurnSnapshot): void {
-  const layers: Array<[string, boolean]> = [
-    ["输入", snapshot.health.input],
-    ["模型", snapshot.health.llm],
-    ["语音", snapshot.health.output],
-  ];
-  el.layerStatus.hidden = false;
-  el.layerStatus.replaceChildren();
-
-  for (const [name, ok] of layers) {
-    const chip = document.createElement("span");
-    chip.className = "panel__layer-chip";
-    chip.dataset.ok = String(ok);
-    chip.textContent = `${name} ${ok ? "✓" : "✗"}`;
-    chip.title = ok
-      ? `${name}层已连接`
-      : `${name}层未连接：可能未启动，或该层厂商未配置密钥`;
-    el.layerStatus.appendChild(chip);
-  }
-
-  const down = layers.filter(([, ok]) => !ok).map(([n]) => n);
-  if (down.length > 0) {
-    const hint = document.createElement("span");
-    hint.className = "panel__layers-hint";
-    hint.textContent =
-            `${down.join("、")}不可用。点上方「管理」按钮在浏览器里配置厂商，` +
-        "配完后重启对应模块（本窗口不保存密钥）。";
-    el.layerStatus.appendChild(hint);
-  }
-}
-
 function renderNotice(snapshot: TurnSnapshot): void {
   if (!snapshot.notice) {
     el.notice.hidden = true;
@@ -521,62 +470,59 @@ el.btnReplay.addEventListener("click", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* 语音输出设备                                                        */
+/* 音频设置（由设置窗口通过事件下发）                                  */
 /* ------------------------------------------------------------------ */
 
 type SinkCapableAudio = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>;
 };
 
-async function loadOutputDevices(): Promise<void> {
-  const mediaDevices = navigator.mediaDevices;
-  if (!mediaDevices?.enumerateDevices) {
-    el.outputSelect.hidden = true;
-    return;
-  }
-  try {
-    const devices = (await mediaDevices.enumerateDevices()).filter(
-      (device) => device.kind === "audiooutput",
-    );
-    el.outputSelect.replaceChildren(new Option("默认输出", ""));
-    devices.forEach((device, index) => {
-      el.outputSelect.appendChild(
-        new Option(device.label || `输出设备 ${index + 1}`, device.deviceId),
-      );
-    });
-    const hasSaved = Array.from(el.outputSelect.options).some(
-      (option) => option.value === currentOutputDevice,
-    );
-    if (!hasSaved) currentOutputDevice = "";
-    el.outputSelect.value = currentOutputDevice;
-    el.outputSelect.hidden = devices.length === 0;
-  } catch {
-    el.outputSelect.hidden = true;
-  }
+function clampVolume(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(1, Math.max(0, value));
 }
 
-async function applyOutputDevice(deviceId: string): Promise<void> {
+async function applyAudioSettings(payload: unknown): Promise<void> {
+  const data =
+    payload && typeof payload === "object"
+      ? (payload as { deviceId?: unknown; volume?: unknown })
+      : {};
+
+  if (typeof data.deviceId === "string") {
+    currentOutputDevice = data.deviceId;
+    settings.outputDevice = data.deviceId;
+    const audio = el.voice as SinkCapableAudio;
+    if (audio.setSinkId) {
+      try {
+        await audio.setSinkId(currentOutputDevice || "");
+        showBadge(currentOutputDevice ? "语音输出已切换" : "语音输出：系统默认", "ok");
+      } catch {
+        showBadge("无法切换语音输出设备", "error");
+      }
+    }
+  }
+
+  if (typeof data.volume === "number") {
+    currentVolume = clampVolume(data.volume);
+    settings.audioVolume = currentVolume;
+    el.voice.volume = currentVolume;
+  }
+
+  saveSettings(settings);
+}
+
+/** 启动时恢复上次保存的音量与输出设备，不弹提示。 */
+function restoreAudioSettings(): void {
+  currentVolume = clampVolume(settings.audioVolume ?? 1);
+  el.voice.volume = currentVolume;
   const audio = el.voice as SinkCapableAudio;
-  if (!audio.setSinkId) {
-    el.outputSelect.hidden = true;
-    return;
-  }
-  try {
-    await audio.setSinkId(deviceId || "");
-    settings.outputDevice = deviceId;
-    saveSettings(settings);
-    showBadge(deviceId ? "语音输出已切换" : "语音输出：系统默认", "ok");
-  } catch {
-    showBadge("无法切换语音输出设备", "error");
+  if (currentOutputDevice && audio.setSinkId) {
+    void audio.setSinkId(currentOutputDevice).catch(() => undefined);
   }
 }
 
-el.outputSelect.addEventListener("change", () => {
-  currentOutputDevice = el.outputSelect.value;
-  void applyOutputDevice(currentOutputDevice);
-});
-navigator.mediaDevices?.addEventListener?.("devicechange", () => {
-  void loadOutputDevices();
+listenAppEvent("dounai://audio-settings", (payload) => {
+  void applyAudioSettings(payload);
 });
 
 /* ------------------------------------------------------------------ */
@@ -664,15 +610,6 @@ el.modelSelect.addEventListener("change", () => {
   saveSettings(settings);
   updateModelHint();
 });
-
-// 管理入口：三层各自打开对应模块的自带管理界面
-for (const [btn, moduleId] of [
-  [el.adminInput, "dounai-input"],
-  [el.adminLlm, "omninexus"],
-  [el.adminOutput, "moodvoice"],
-] as const) {
-  btn?.addEventListener("click", () => void openAdminFor(moduleId));
-}
 
 el.close.addEventListener("click", closePanel);
 el.btnNewSession.addEventListener("click", () => {
@@ -1016,8 +953,7 @@ void (async () => {
   const health = await orchestrator.probe();
   // 模型清单与探活并行拉取：清单失败不影响面板可用性
   await loadModels();
-  await loadOutputDevices();
-  if (currentOutputDevice) await applyOutputDevice(currentOutputDevice);
+  restoreAudioSettings();
   if (lastSnapshot) render(lastSnapshot, "");
 
   // 无论上游是否就绪都展开面板：

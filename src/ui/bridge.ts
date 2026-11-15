@@ -18,6 +18,7 @@ interface TauriInvoke {
 
 interface TauriEventApi {
   listen(event: string, handler: (event: { payload: unknown }) => void): Promise<() => void>;
+  emit(event: string, payload?: unknown): Promise<unknown>;
 }
 
 interface TauriGlobal {
@@ -71,6 +72,45 @@ export async function notifyPanelVisibility(visible: boolean): Promise<void> {
   } catch {
     // 主进程未实现该命令时不影响 UI
   }
+}
+
+/** 统一的自定义命令调用；浏览器预览下抛错，由调用方决定是否降级。 */
+export async function invokeApp<T = unknown>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const tauri = getTauri();
+  const invoke = tauri?.core?.invoke ?? tauri?.invoke;
+  if (!invoke) throw new Error("当前环境没有 Tauri 桥接");
+  return (await invoke(command, args)) as T;
+}
+
+/** 向其他窗口广播应用事件（例如设置窗口 → 悬浮窗）。 */
+export async function emitAppEvent(event: string, payload?: unknown): Promise<void> {
+  const tauri = getTauri();
+  if (!tauri?.event?.emit) return;
+  try {
+    await tauri.event.emit(event, payload);
+  } catch {
+    // 事件是增强能力，失败不应影响设置保存
+  }
+}
+
+/** 监听应用事件；返回取消函数（无 Tauri 时为空操作）。 */
+export function listenAppEvent(
+  event: string,
+  handler: (payload: unknown) => void,
+): () => void {
+  const tauri = getTauri();
+  if (!tauri?.event?.listen) return () => undefined;
+  let unlisten: (() => void) | undefined;
+  void tauri.event
+    .listen(event, (message) => handler(message.payload))
+    .then((fn) => {
+      unlisten = fn;
+    })
+    .catch(() => undefined);
+  return () => unlisten?.();
 }
 
 /**

@@ -19,6 +19,8 @@ export interface DounaiSettings {
   promptProfile: string;
   /** 语音输出设备 id；空字符串表示系统默认输出 */
   outputDevice: string;
+  /** 语音音量 0..1 */
+  audioVolume: number;
   theme: {
     accent: string;
     surface: string;
@@ -41,6 +43,7 @@ export const DEFAULT_SETTINGS: DounaiSettings = {
   model: "",
   promptProfile: "",
   outputDevice: "",
+  audioVolume: 1,
   theme: {
     accent: "#5b8def",
     surface: "#ffffff",

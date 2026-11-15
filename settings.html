@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dounai 设置</title>
+    <link rel="stylesheet" href="./styles/settings.css" />
+  </head>
+  <body>
+    <header class="page-head">
+      <div>
+        <h1>Dounai 设置</h1>
+        <p class="subtle">模块连接、音频输出与桌面行为</p>
+      </div>
+      <button id="refresh-status" class="btn btn--ghost" type="button">刷新状态</button>
+    </header>
+
+    <main>
+      <section class="card">
+        <div class="card-head">
+          <h2>模块连接</h2>
+          <span class="subtle">密钥由各模块自己的管理界面保存，本页不读取、不存储密钥。</span>
+        </div>
+
+        <div class="module-row" data-module="input">
+          <div class="module-meta">
+            <h3>输入层 · 文字 / 图像 / 语音</h3>
+            <code id="endpoint-input"></code>
+          </div>
+          <span class="status" id="status-input" data-ok="unknown">检测中</span>
+          <button class="btn" type="button" data-admin="dounai-input">打开输入层设置</button>
+        </div>
+
+        <div class="module-row" data-module="llm">
+          <div class="module-meta">
+            <h3>模型层 · 模型 / 提示词 / 搜索</h3>
+            <code id="endpoint-llm"></code>
+          </div>
+          <span class="status" id="status-llm" data-ok="unknown">检测中</span>
+          <button class="btn" type="button" data-admin="omninexus">打开模型层设置</button>
+        </div>
+
+        <div class="module-row" data-module="output">
+          <div class="module-meta">
+            <h3>语音层 · 情感 TTS</h3>
+            <code id="endpoint-output"></code>
+          </div>
+          <span class="status" id="status-output" data-ok="unknown">检测中</span>
+          <button class="btn" type="button" data-admin="moodvoice">打开语音层设置</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>音频</h2>
+          <span class="subtle">设置会立即应用到悬浮窗，并保存在本地。</span>
+        </div>
+
+        <label class="field">
+          <span>语音输出设备</span>
+          <select id="audio-device">
+            <option value="">系统默认输出</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>语音音量</span>
+          <div class="range-row">
+            <input id="audio-volume" type="range" min="0" max="100" step="1" />
+            <output id="volume-value">100%</output>
+          </div>
+        </label>
+
+        <button id="test-audio" class="btn btn--ghost" type="button">播放测试音</button>
+
+        <label class="switch">
+          <input id="dnd" type="checkbox" />
+          <span>勿扰模式（静音，形象变灰）</span>
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>桌面</h2>
+        </div>
+
+        <label class="switch">
+          <input id="always-top" type="checkbox" />
+          <span>悬浮窗置顶</span>
+        </label>
+
+        <p class="hint">
+          快捷键：<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> 唤起/收起；
+          <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Q</kbd> 勿扰。
+        </p>
+      </section>
+
+      <section class="card card--note">
+        <h2>桌面与设置的分工</h2>
+        <p>
+          悬浮窗只保留人格切换、模型切换、对话与语音重播。
+          输入层、模型层、语音层的厂商和密钥分别在各模块自带的管理界面中配置；
+          音频输出、音量、勿扰与置顶集中在本页。
+        </p>
+        <p id="page-note" class="note" role="status"></p>
+      </section>
+    </main>
+
+    <script type="module" src="./src/ui/settings-page.ts"></script>
+  </body>
+</html>
