@@ -397,6 +397,37 @@ body {
   overflow-x: auto;
 }
 
+/* 每条回答下方的重播入口：只作用于该条消息自己的语音。
+   放在文本下面而不是输入栏里，用户才能重听历史消息。 */
+.bubble__footer {
+  display: flex;
+  margin-top: 4px;
+}
+
+.bubble__replay {
+  border: none;
+  background: transparent;
+  margin-left: -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0.74;
+  transition: opacity 140ms ease, background 140ms ease, transform 120ms ease;
+}
+
+.bubble__replay:hover {
+  opacity: 1;
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.bubble__replay:active {
+  transform: scale(0.96);
+}
+
 /* 流式光标：用伪元素，避免额外 DOM 节点引起重排 */
 .bubble--streaming .bubble__body::after {
   content: "";
@@ -593,6 +624,9 @@ body {
   }
   .bubble--code .bubble__body {
     background: rgba(255, 255, 255, 0.07);
+  }
+  .bubble__replay:hover {
+    background: rgba(255, 255, 255, 0.08);
   }
 }
 

@@ -51,10 +51,8 @@
         <div id="notice" class="panel__notice" hidden></div>
 
         <!-- 三路输入：文字 / 图像 / 语音（对应结构图的三个输入入口） -->
+        <!-- 语音重播入口不在这里：它跟着每条回答渲染在文本下方，方便重听历史消息。 -->
         <form id="composer" class="panel__composer">
-          <button id="btn-replay" class="tool-btn" type="button" hidden title="播放语音" aria-label="播放语音">
-            🔊
-          </button>
           <button id="btn-image" class="tool-btn" type="button" title="发送图片" aria-label="发送图片">
             🖼
           </button>

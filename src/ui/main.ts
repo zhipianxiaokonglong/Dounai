@@ -49,7 +49,6 @@ const el = {
   // 结构图要求的三路输入入口 + 提示词切换入口
   btnImage: must<HTMLButtonElement>("btn-image"),
   btnVoice: must<HTMLButtonElement>("btn-voice"),
-  btnReplay: must<HTMLButtonElement>("btn-replay"),
   filePicker: must<HTMLInputElement>("file-picker"),
   promptSelect: must<HTMLSelectElement>("prompt-select"),
 };
@@ -284,8 +283,65 @@ function renderStream(snapshot: TurnSnapshot, text: string): void {
   }
 
   if (snapshot.contentType === "code") currentBubble.classList.add("bubble--code");
+  if (snapshot.audioUrl) attachReplayButton(currentBubble, snapshot.audioUrl);
 
   el.stream.scrollTop = el.stream.scrollHeight;
+}
+
+/**
+ * 把重播按钮挂到某条回答的文本下方。
+ *
+ * 为什么不做成输入栏里的全局按钮：那样只能重播“最后一条”，
+ * 用户想重听历史消息时没有入口。这里每个气泡各自持有自己的
+ * audioUrl，点哪条就播哪条，互不影响。
+ */
+function attachReplayButton(bubble: HTMLElement | null, url: string): void {
+  if (!bubble) return;
+
+  let footer = bubble.querySelector<HTMLElement>(".bubble__footer");
+  if (!footer) {
+    footer = document.createElement("div");
+    footer.className = "bubble__footer";
+    bubble.appendChild(footer);
+  }
+
+  let button = footer.querySelector<HTMLButtonElement>(".bubble__replay");
+  if (!button) {
+    const created = document.createElement("button");
+    created.type = "button";
+    created.className = "bubble__replay";
+    created.textContent = "🔊 重播";
+    created.title = "重播这条语音";
+    created.setAttribute("aria-label", "重播这条语音");
+    created.addEventListener("click", () => {
+      const target = created.dataset.audioUrl;
+      if (target) playReplayAudio(target, created);
+    });
+    footer.appendChild(created);
+    button = created;
+  }
+
+  button.dataset.audioUrl = url;
+  button.hidden = false;
+}
+
+/** 重播指定消息的语音：同一消息重复点击时从头播放。 */
+function playReplayAudio(url: string, button?: HTMLButtonElement): void {
+  if (el.voice.src !== url) {
+    el.voice.src = url;
+  } else {
+    try {
+      el.voice.currentTime = 0;
+    } catch {
+      // 元数据还没加载好时设置 currentTime 会抛错；此时本来就是从头播
+    }
+  }
+  void el.voice
+    .play()
+    .then(() => startSpeakingLoop())
+    .catch(() => {
+      if (button) button.title = "无法播放，请检查系统音频设备或语音层状态";
+    });
 }
 
 /**
@@ -409,16 +465,10 @@ function playAudio(url: string): void {
   const playPromise = el.voice.play();
   if (playPromise) {
     playPromise
-      .then(() => {
-        el.btnReplay.hidden = false;
-        el.btnReplay.title = "重新播放语音";
-        startSpeakingLoop();
-      })
+      .then(() => startSpeakingLoop())
       .catch(() => {
-        // 自动播放被浏览器策略拦截：保留一个可见的播放按钮，
-        // 让用户用一次手势继续播放；不再静默地“没有声音”。
-        el.btnReplay.hidden = false;
-        el.btnReplay.title = "自动播放被系统拦截，点击播放语音";
+        // 自动播放被浏览器策略拦截：该消息下方已经有可见的重播按钮，
+        // 用户点一次即可继续播放；这里只把状态收敛回文本已就绪。
         stopSpeakingLoop();
         orchestrator.notifyTextSettled();
       });
@@ -426,11 +476,10 @@ function playAudio(url: string): void {
 }
 
 let lastAudioUrl: string | null = null;
-let replayAudioUrl: string | null = null;
 function syncAudio(snapshot: TurnSnapshot): void {
   const url = snapshot.audioUrl;
-  if (url) replayAudioUrl = url;
-  el.btnReplay.hidden = !replayAudioUrl;
+  // 重播按钮绑定到本回合自己的气泡上，历史消息各自保留入口
+  if (url) attachReplayButton(currentBubble, url);
   if (url === lastAudioUrl) return;
   lastAudioUrl = url;
   if (url) playAudio(url);
@@ -457,17 +506,6 @@ document.addEventListener(
   },
   { once: true },
 );
-
-el.btnReplay.addEventListener("click", () => {
-  if (!replayAudioUrl) return;
-  if (el.voice.src !== replayAudioUrl) el.voice.src = replayAudioUrl;
-  void el.voice
-    .play()
-    .then(() => startSpeakingLoop())
-    .catch(() => {
-      el.btnReplay.title = "仍然无法播放，请检查系统音频设备或语音层状态";
-    });
-});
 
 /* ------------------------------------------------------------------ */
 /* 音频设置（由设置窗口通过事件下发）                                  */
