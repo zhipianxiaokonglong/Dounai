@@ -50,6 +50,10 @@ const el = {
   btnImage: must<HTMLButtonElement>("btn-image"),
   btnVoice: must<HTMLButtonElement>("btn-voice"),
   filePicker: must<HTMLInputElement>("file-picker"),
+  attachment: must<HTMLElement>("attachment"),
+  attachmentPreview: must<HTMLImageElement>("attachment-preview"),
+  attachmentName: must<HTMLElement>("attachment-name"),
+  btnAttachmentRemove: must<HTMLButtonElement>("btn-attachment-remove"),
   promptSelect: must<HTMLSelectElement>("prompt-select"),
 };
 
@@ -598,6 +602,7 @@ function closePanel(): void {
 /** 新对话：重置上下文并换一个会话 ID（D-04 + D-01）。 */
 function startNewSession(): void {
   currentBubble = null;
+  clearPendingImage();
   el.stream.replaceChildren(el.emptyHint);
   orchestrator.reset();
   // 换新会话 ID：否则模型层仍会把新对话接到旧上下文里
@@ -655,13 +660,48 @@ el.btnNewSession.addEventListener("click", () => {
   startNewSession();
 });
 
-/* 图像入口：点击 → 选文件 → 交给输入层 */
+/* 图像入口：点击 → 选文件 → 先放入待发送区，补完文字再一起发送 */
 el.btnImage.addEventListener("click", () => el.filePicker.click());
 el.filePicker.addEventListener("change", () => {
   const file = el.filePicker.files?.[0];
   el.filePicker.value = "";
-  if (file) void sendImage(file);
+  if (file) stageImage(file);
 });
+el.btnAttachmentRemove.addEventListener("click", () => clearPendingImage());
+
+let pendingImage: File | null = null;
+let pendingImageUrl: string | null = null;
+
+/**
+ * 暂存待发送图片。
+ *
+ * 历史问题：选完文件立刻上传，用户来不及补一句“这张图里是什么”；
+ * 图片和文字还会被拆成两轮。现在先显示预览，点发送时才真正提交。
+ */
+function stageImage(file: File): void {
+  if (!file.type.startsWith("image/")) {
+    showLocalError(new Error("只支持 PNG / JPEG / WebP / GIF 图片。"), "无法添加图片");
+    return;
+  }
+  clearPendingImage();
+  pendingImage = file;
+  pendingImageUrl = URL.createObjectURL(file);
+  el.attachmentPreview.src = pendingImageUrl;
+  el.attachmentName.textContent = file.name || "粘贴的图片";
+  el.attachment.hidden = false;
+  el.input.focus();
+  el.stream.scrollTop = el.stream.scrollHeight;
+}
+
+/** 清掉待发送图片，并释放预览用的 object URL。 */
+function clearPendingImage(): void {
+  if (pendingImageUrl) URL.revokeObjectURL(pendingImageUrl);
+  pendingImage = null;
+  pendingImageUrl = null;
+  el.attachmentPreview.removeAttribute("src");
+  el.attachmentName.textContent = "";
+  el.attachment.hidden = true;
+}
 
 /* 语音入口：点击开始录音，再点结束并上传 */
 el.btnVoice.addEventListener("click", () => void toggleRecording());
@@ -792,7 +832,10 @@ function updateModelHint(): void {
 
 el.composer.addEventListener("submit", (event) => {
   event.preventDefault();
-  void send(el.input.value);
+  const text = el.input.value.trim();
+  // 有暂存图片时，文字作为图片的补充说明一起发出；没有图片才走纯文字
+  if (pendingImage) void sendImage(pendingImage, text);
+  else void send(text);
 });
 
 async function send(raw: string): Promise<void> {
@@ -822,11 +865,19 @@ async function send(raw: string): Promise<void> {
 /* 图像输入（结构图：图像输入 → 输入层，受控媒体 URL）                   */
 /* ------------------------------------------------------------------ */
 
-async function sendImage(file: File): Promise<void> {
+async function sendImage(file: File, caption = ""): Promise<void> {
   if (busy) return;
+  const text = caption.trim();
   busy = true;
+  el.input.value = "";
+  clearPendingImage();
   renderControls(lastSnapshot ?? idleSnapshot());
-  appendUserBubble(`🖼 图片：${file.name || "粘贴的图片"}`, "image");
+  appendUserBubble(
+    text
+      ? `🖼 图片：${file.name || "粘贴的图片"}\n${text}`
+      : `🖼 图片：${file.name || "粘贴的图片"}`,
+    "image",
+  );
   currentBubble = null;
 
   try {
@@ -837,6 +888,8 @@ async function sendImage(file: File): Promise<void> {
         bytes,
         filename: file.name || undefined,
         mime: file.type || undefined,
+        // 文字与图片作为同一条消息的多个分区，模型可以结合图片理解补充说明
+        caption: text || undefined,
         // 发图前先查当前模型能力（不支持就不发，避免上游降级成"答非所问"）
         modelSupportsImage: currentModelSupportsImage(),
       },

@@ -380,6 +380,8 @@ body {
   text-align: right;
   color: var(--text-dim);
   font-size: 12px;
+  /* 图片消息可能带补充文字，保留用户输入的换行 */
+  white-space: pre-wrap;
 }
 
 .bubble--assistant .bubble__body {
@@ -531,6 +533,38 @@ body {
   border-top-color: rgba(229, 72, 77, 0.16);
 }
 
+/* 待发送图片：小预览行，不抢对话区空间 */
+.panel__attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.panel__attachment-img {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.panel__attachment-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel__attachment-remove {
+  flex: 0 0 auto;
+}
+
 .panel__composer {
   display: flex;
   gap: 6px;
@@ -627,6 +661,10 @@ body {
   }
   .bubble__replay:hover {
     background: rgba(255, 255, 255, 0.08);
+  }
+  .panel__attachment-img {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
   }
 }
 

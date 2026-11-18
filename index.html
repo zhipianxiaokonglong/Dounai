@@ -50,6 +50,19 @@
 
         <div id="notice" class="panel__notice" hidden></div>
 
+        <!-- 待发送图片：选中后先留在这里，用户可以补文字、确认无误再发送 -->
+        <div id="attachment" class="panel__attachment" hidden>
+          <img id="attachment-preview" class="panel__attachment-img" alt="待发送图片" />
+          <span id="attachment-name" class="panel__attachment-name"></span>
+          <button
+            id="btn-attachment-remove"
+            class="icon-btn panel__attachment-remove"
+            type="button"
+            title="移除图片"
+            aria-label="移除图片"
+          >×</button>
+        </div>
+
         <!-- 三路输入：文字 / 图像 / 语音（对应结构图的三个输入入口） -->
         <!-- 语音重播入口不在这里：它跟着每条回答渲染在文本下方，方便重听历史消息。 -->
         <form id="composer" class="panel__composer">

@@ -76,6 +76,14 @@ export type SubmitPayload =
       filename?: string;
       mime?: string;
       /**
+       * 与图片同属一条用户消息的补充文字。
+       *
+       * 输入层一次只接收一个文件，所以说明文字不经过输入层；它会被构造成
+       * 模型事件的前置 text 分区，和 image 分区一起提交（与 OmniNexus
+       * 自带 Web 页的图文消息结构一致）。
+       */
+      caption?: string;
+      /**
        * 当前模型是否声明支持图片输入。
        *
        * 由 UI 从 `/v1/models` 的 `capabilities.inputModalities` 读取后传入。
@@ -148,19 +156,21 @@ function buildParts(
     }
 
     const dataUrl = toDataUrl(input.bytes, mime);
-    return {
-      ok: true,
-      parts: [
-        {
-          modality: "image",
-          content: dataUrl,
-          metadata: {
-            mime_type: mime,
-            ...(input.filename ? { filename: input.filename } : {}),
-          },
-        },
-      ],
-    };
+    const parts: LLMPart[] = [];
+    // 与 OmniNexus 自带 Web 页一致：补充文字在前，图片分区在后。
+    // 模型因此能把“这张图里是什么”与图片本身放在同一轮里理解。
+    if (input.caption?.trim()) {
+      parts.push({ modality: "text", content: input.caption.trim() });
+    }
+    parts.push({
+      modality: "image",
+      content: dataUrl,
+      metadata: {
+        mime_type: mime,
+        ...(input.filename ? { filename: input.filename } : {}),
+      },
+    });
+    return { ok: true, parts };
   }
 
   // 语音：只有上游明确说"转写完成"才可用。

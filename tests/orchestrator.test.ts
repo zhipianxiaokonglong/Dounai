@@ -179,6 +179,35 @@ describe("Orchestrator 正常链路", () => {
     expect(snapshot.text).toBe("我在呢，慢慢说。");
   });
 
+  it("图文消息：补充文字作为同一轮的前置 text 分区", async () => {
+    const { orchestrator, input, llm } = makeOrchestrator({
+      input: {
+        submitImage: vi.fn().mockResolvedValue({
+          event: makeInputEvent({ modality: "image", content: "http://127.0.0.1:8101/v1/media/a" }),
+          degraded: { degraded: false, provider: "offline", model: null, voiceprintChecked: false, requestId: null },
+        }),
+      },
+    });
+
+    await orchestrator.submit({
+      kind: "image",
+      bytes: new Uint8Array([1, 2, 3]),
+      filename: "x.png",
+      mime: "image/png",
+      caption: "  图里写了什么？  ",
+    });
+
+    expect(input.submitImage).toHaveBeenCalledTimes(1);
+    const sent = vi.mocked(llm.runTurn).mock.calls[0]![0];
+    // 文字在前、图片在后，与 OmniNexus 自带 Web 页的图文消息一致
+    expect(sent.parts[0]).toEqual({ modality: "text", content: "图里写了什么？" });
+    expect(sent.parts[1]).toMatchObject({
+      modality: "image",
+      content: "data:image/png;base64,AQID",
+      metadata: { mime_type: "image/png", filename: "x.png" },
+    });
+  });
+
   it("语音输入走 submitAudio，且转写文本优先作为模型输入", async () => {
     const { orchestrator, input, llm } = makeOrchestrator({
       input: {
