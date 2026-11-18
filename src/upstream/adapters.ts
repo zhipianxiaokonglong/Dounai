@@ -291,13 +291,20 @@ export interface TurnRequest {
   sessionId?: string;
   model?: string;
   /**
-   * 本轮使用的提示词配置 ID（结构图「提示词操作：预留更换接口供 UI 调用」）。
+   * 每轮使用的提示词配置 ID（结构图「提示词操作：预留更换接口供 UI 调用」）。
    *
    * 用 model 层支持的**每轮覆盖**语义（`metadata.prompt_profile`），
    * 而不是先建会话再切提示词——后者需要组装层维护会话生命周期，
    * 会让「换提示词」这种轻量操作牵动状态管理。
    */
   promptProfile?: string;
+  /**
+   * 本轮是否启用联网搜索。
+   *
+   * 悬浮窗**没有**自己的搜索开关：不传时由 `runTurn` 读取模型层的
+   * 会话设置（Web 页「联网搜索」开关）并原样透传，实现跟随。
+   */
+  webSearch?: boolean;
 }
 
 /** 提示词配置（模型层 `/v1/prompts/profiles` 的返回项）。 */
@@ -377,6 +384,31 @@ export class LLMAdapter {
   }
 
   /**
+   * 读取模型层的会话级搜索开关。
+   *
+   * 悬浮窗不维护独立的搜索开关：用户在 Web 页把某个会话的「联网搜索」
+   * 打开/关闭后，下一轮就按这个值发 `metadata.web_search`。
+   *
+   * 读取失败（旧版模型层没有该端点、会话尚未创建）时返回 undefined，
+   * 让模型层继续用会话默认值——绝不能因为一次探测失败就把搜索强行关掉。
+   */
+  private async sessionWebSearch(sessionId?: string): Promise<boolean | undefined> {
+    if (!sessionId) return undefined;
+    try {
+      const res = await request({
+        url: `${this.base}/v1/sessions/${encodeURIComponent(sessionId)}/settings`,
+        method: "GET",
+        timeoutMs: TIMEOUTS.probe,
+      });
+      if (res.status < 200 || res.status >= 400) return undefined;
+      const raw = await readJson(res);
+      return isRecord(raw) && typeof raw.web_search === "boolean" ? raw.web_search : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * 跑一个完整回合。返回 final 事件；若上游在产生文本前失败则抛错。
    *
    * 注意：这里**不**在首 token 处返回，而是等到 final —— 因为 output 需要完整文本。
@@ -387,6 +419,8 @@ export class LLMAdapter {
     callbacks: TurnCallbacks,
     signal?: AbortSignal,
   ): Promise<LLMEvent> {
+    // 搜索开关跟随模型层会话设置；显式传入时以调用方为准。
+    const webSearch = turn.webSearch ?? (await this.sessionWebSearch(turn.sessionId));
     const body = JSON.stringify({
       event_id: turn.eventId,
       // D-01：session_id 是模型层 InboundEvent 的**顶层字段**。
@@ -398,6 +432,8 @@ export class LLMAdapter {
         ...(turn.model ? { model: turn.model } : {}),
         // 每轮覆盖提示词配置；不传则沿用模型层默认
         ...(turn.promptProfile ? { prompt_profile: turn.promptProfile } : {}),
+        // 不传时模型层按会话设置决定，这里只透传读到的值
+        ...(webSearch !== undefined ? { web_search: webSearch } : {}),
       },
     });
 
